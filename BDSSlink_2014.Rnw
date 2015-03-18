@@ -1,0 +1,2285 @@
+\documentclass{article}
+\usepackage{xspace,colortbl}
+\usepackage[print,nopanel,gray]{pdfscreen}
+\usepackage{overcite,setspace}
+\usepackage{rotating}
+
+\usepackage{listings}
+\lstloadlanguages{SAS}
+\lstset{basicstyle=\footnotesize,keywordstyle=\color{blue},commentstyle=\color{red}}
+
+   \setlength{\parindent}{0em}
+   \setlength{\parskip}{2ex}
+   \setlength{\topmargin}{-0.5in}
+   \setlength{\textheight}{9.5in}
+   \setlength{\textwidth}{6.0in}
+   \setlength{\oddsidemargin}{0.25in}
+
+\renewcommand\floatpagefraction{1}
+\renewcommand\textfraction{0}
+
+\raggedright
+\makeatletter \renewcommand\@biblabel[1]{#1.} \makeatother
+
+\setcounter{secnumdepth}{0}
+\setcounter{tocdepth}{2}
+
+\newcommand\bvm{\begin{verbatim}}
+\newcommand\evm{\end{verbatim}}
+\newcommand\bfs{\begin{footnotesize}}
+\newcommand\efs{\end{footnotesize}}
+
+\specialcomment{detail}{\rule{1ex}{1ex}\hspace{1ex}\rule{1ex}{1ex}\begin{small}
+   {\it begin analysis details}\\}
+   {\rule{1ex}{1ex}{\it \ end analysis details}\end{small}}
+
+\title{Linking the Birth Defects Surveillance System data with birth certificate records}
+\author{}
+\date{\today}
+
+\begin{document}
+\excludecomment{detail}
+\includecomment{detail2}
+%\excludecomment{detail2}
+
+%<<echo=F,results=hide>>=
+%library(xtable)
+%save.width<-options(width=70)$width
+%@
+
+\pagestyle{myheadings}
+\thispagestyle{empty}
+
+\section{Linking the birth defects and birth files}
+
+\noindent
+Eric Ossiander\\
+\today
+
+\begin{detail}
+
+\section{Introduction}
+
+This describes the deduplication of the BDSS data, and its linkage to
+the birth certificate file. This linkage was done in October, 2014,
+with data files obtained from the BDSS system on October 20,
+2014. These files have a fairly complete record of discharges from
+January 2002 through June 2014. This linkage will be done for children
+born during 2001--2013. This mainly uses the same methods that we used
+for the linkage that was done in early 2012, with data through August,
+2011, for children born during 2001--2010.
+
+The tables in the BDSS system that we will use for linking to birth certificate data are {\tt
+visit} and {\tt visitICDcode}.
+
+According to Phyllis, the birth files with names that we use in this
+project are restricted to include only these births:
+\begin{itemize}
+\item	Washington occurrence
+\item	Child is still alive
+\item	Regular Birth (in other words, no Fetal, no OOS, no delayed, no foreign born)
+\item	No adoption
+\end{itemize}
+
+\section{Deduplication}
+
+We used the SAS program {\tt BDSSlink\_2014.sas} to read the file from
+the SQL server database and prepare SAS datasets.
+
+\begin{lstlisting}[language=sas,caption=Prepare file for R]
+libname bdlink 'c:\PGPlead\BDSS';
+
+data bdlink.bdss2001_2013(keep=index clientID birthdate firstname gfirstname glastname
+            gmiddlename gphone lastname medicalrecordno middlename physicianname
+            physiciannum sexcode zip admitdate dischargedate visitid icdcodelist);
+   length index $ 6 clientID $ 6 firstname $15 middlename $ 1 lastname $ 25 sexcode $ 10
+         zip $ 5 gfirstname $ 15 gmiddlename $ 1 glastname $ 25 gphone $ 15
+         medicalrecordno $ 14 physicianname $ 25 physiciannum $ 10;
+   set bdlink.visit(where=('01jan2001'd le (datepart(visit_birthdate)) le '30dec2013'd)
+                    rename=(visit_id=visitid icd_code_list=icdcodelist));
+   if _n_ = 1 then indexnum = 1;
+   index = put(indexnum,z6.0);
+   indexnum+1;
+   clientID           = put(client_id,6.);
+   birthdate          = datepart(visit_birthdate     );
+   admitdate          = datepart(visit_admitdate     );
+   dischargedate      = datepart(visit_dischargedate );
+   firstname          = left(visit_firstname         );
+   gfirstname         = left(visit_guardianfirstname );
+   glastname          = left(visit_guardianlastname  );
+   gmiddlename        = left(visit_guardianmiddlename);
+   gphone             = left(visit_guardianphone     );
+   lastname           = left(visit_lastname          );
+   medicalrecordno    = left(visit_medicalrecordno   );
+   middlename         = left(visit_middlename        );
+   tempdocname1       = left(visit_physicianname     );
+   physiciannum       = left(visit_physiciannum      );
+   sexcode            = left(visit_sexcode           );
+   zip                = left(visit_zip               );
+   if upcase(firstname) in (
+      'B ',
+      'BABY ',
+      'BABY 1 BOY',
+      'BABY 1 GIRL',
+      'BABY 2 ',
+      'BABY 2 BOY',
+      'BABY 2 GIRL',
+      'BABY B ',
+      'BABY BOY ',
+      'BABY BOY 1',
+      'BABY BOY 2',
+      'BABY BOY A',
+      'BABY BOY B',
+      'BABY G',
+      'BABY GIR ',
+      'BABY GIRL ',
+      'BABY GIRL 1',
+      'BABY GIRL A',
+      'BABY GIRL STILL',
+      'BABY ONE',
+      'BABYBOY ',
+      'BABYGIRL ',
+      'BABYMALE',
+      'BABYONE BOY',
+      'BOY ',
+      'BOY 2',
+      'BOY 3',
+      'BOY A',
+      'BOY B ',
+      'BOYA',
+      'BOYB',
+      'BOYC',
+      'BOY ONE',
+      'BOY TWIN A',
+      'BOY-ONE ',
+      'GIRL ',
+      'GIRL B ',
+      'GIRL C ',
+      'GIRL-ONE'
+      )
+      then firstname = '';
+   if middlename in ('(','-','0','1','2','3') then middlename = '';
+   if sexcode in ('Not stated','Ambiguous') then sexcode = '';
+/*
+remove embedded commas and quotes from the physcian name field
+*/
+   tempdocname2 = compress(tempdocname1,'"');
+   cplace = index(tempdocname2,',');
+   if cplace ne 0 then
+      physicianname = substr(tempdocname2,1,cplace-1)||' '||left(substr(tempdocname2,cplace+1));
+   if cplace = 0 then physicianname = tempdocname2;
+run;
+
+proc export data=bdlink.bdss2001_2013
+   outfile = 'c:\PGPlead\bdss\bdss01_13.csv'
+   dbms=csv
+   replace;
+run;
+\end{lstlisting}
+
+
+The string comparator functions are case sensitive. In these data, names are sometimes
+entered in proper case, and sometimes as upper case. To make sure all values have the
+same case, I will convert everything to lower case.
+
+\bfs
+\begin{verbatim}
+library(RecordLinkage)
+bdss <- read.csv(file="c:\\PGPlead\\BDSS\\bdss01_13.csv")
+bdss$birthdate         <- as.Date(bdss$birthdate,origin="1960-01-01")
+bdss$admitdate         <- as.Date(bdss$admitdate,origin="1960-01-01")
+bdss$dischargedate     <- as.Date(bdss$dischargedate,origin="1960-01-01")
+bdss$physicianname     <- tolower(bdss$physicianname)
+bdss$firstname         <- tolower(bdss$firstname      )
+bdss$gfirstname        <- tolower(bdss$gfirstname     )
+bdss$glastname         <- tolower(bdss$glastname      )
+bdss$gmiddlename       <- tolower(bdss$gmiddlename    )
+bdss$lastname          <- tolower(bdss$lastname       )
+bdss$medicalrecordno   <- tolower(bdss$medicalrecordno)
+bdss$middlename        <- tolower(bdss$middlename     )
+bdss$physiciannum      <- tolower(bdss$physiciannum   )
+bdss$sexcode           <- tolower(bdss$sexcode        )
+bdss$firstname.sdx     <- soundex(bdss$firstname)
+bdss$lastname.sdx      <- soundex(bdss$lastname)
+bdss$gfirstname.sdx    <- soundex(bdss$gfirstname)
+bdss$glastname.sdx     <- soundex(bdss$glastname)
+bdss$physicianname.sdx <- soundex(bdss$physicianname)
+bdss$subname           <- bdss$lastname
+bdss$icdcodelist       <- as.character(bdss$icdcodelist)
+bdss$gphone            <- as.character(bdss$gphone)
+\end{verbatim}
+\efs
+
+With RecordLinkage, we first create a file with all the pairs of records we want to
+compare. If no blocking fields are specified, this is $n(n-1)/2$ pairs, where $n$ is the
+original number of records. While creating this file, we specify the comparator functions
+that are to be used to compare values for each field.
+
+\begin{tabular}{rllr}
+data frame&                   &                      \\
+position & field             &  comparator function \\ \hline
+      1  & index             &  not used             \\
+      2  & clientID          &  not used             \\
+      3  & firstname         &  exact                \\
+      4  & middlename        &  exact                \\
+      5  & lastname          &  exact                \\
+      6  & sexcode           &  exact                \\
+      7  & zip               &  exact                \\
+      8  & gfirstname        &  not used             \\
+      9  & gmiddlename       &  not used             \\
+     10  & glastname         &  not used             \\
+     11  & gphone            &  not used             \\
+     12  & medicalrecordno   &  exact                \\
+     13  & physicianname     &  not used             \\
+     14  & physiciannum      &  not used             \\
+     15  & visitid           &  not used             \\
+     16  & icdcodelist       &  CodeContains.func    \\
+     17  & birthdate         &  blocking field       \\
+     18  & admitdate         &  not used             \\
+     19  & dischargedate     &  not used             \\
+     20  & firstname.sdx     &  exact                \\
+     21  & lastname.sdx      &  exact                \\
+     22  & gfirstname.sdx    &  exact                \\
+     23  & glastname.sdx     &  exact                \\
+     24  & physicianname.sdx &  exact                \\
+     25  & subname           &  NameContains.func     \\
+\hline
+\end{tabular}
+
+<<>>=
+NameContains.func <- function(str1, str2){
+# Function to compare two strings.
+# Returns:
+#   1 if the shorter string is contained in the other
+#   0 otherwise
+# if the shorter string is longer than 6 characters, then only
+# the first 6 characters are used.
+  score     <- rep(NA,length(str1))
+  longname  <- rep(NA,length(str1))
+  shortname <- rep(NA,length(str1))
+  for(i in 1:length(str1)){
+    if(str1[i]=='' | str2[i]=='' | is.na(str1[i]) | is.na(str2[i])) score[i] <- NA else{
+      if(str1[i] == str2[i]) score[i] <- 1 else {
+        if(nchar(str1[i]) >= nchar(str2[i])){longname[i] <- str1[i];
+          shortname[i] <- str2[i]} else {longname[i] <- str2[i]; shortname[i] <- str1[i]}
+        if(nchar(shortname[i]) < 3) score[i] <- 0 else {
+          if(nchar(shortname[i]) > 6)shortname[i] <- substr(shortname[i],1,6)
+          score[i] <- if(grepl(shortname[i],longname[i]))1 else 0
+    }}}}
+  return(score)
+}
+CodeContains.func <- function(str1, str2){
+# Function to compare two strings.
+# Returns:
+#   1 if the substring consisting of the first 6 characters of either string
+#     is contained in the other string
+#   0 otherwise
+  score      <- rep(NA,length(str1))
+  first6str1 <- rep(NA,length(str1))
+  first6str2 <- rep(NA,length(str1))
+  for(i in 1:length(str1)){
+    if(str1[i]=='' | str2[i]=='' | is.na(str1[i]) | is.na(str2[i])) score[i] <- NA else{
+      if(str1[i] == str2[i]) score[i] <- 1 else {
+          first6str1[i] <- substr(str1[i],1,6)
+          first6str2[i] <- substr(str2[i],1,6)
+          if(grepl(first6str1[i],str2[i])) score[i] <- 1 else {
+          score[i] <- if(grepl(first6str2[i],str1[i]))1 else 0
+      }}}}
+  return(score)
+}
+@
+
+\bfs
+\begin{verbatim}
+%<<>>=
+# order of fields in pairs in bdss is:
+# index, clientID, firstname, middlename, lastname, sexcode, zip,
+# gfirstname, gmiddlename, glastname, gphone, medicalrecordno,
+# physicianname, physiciannum, visitid, icdcodelist, birthdate,
+# admitdate, dischargedate, firstname.sdx, lastname.sdx, gfirstname.sdx,
+# glastname.sdx, physicianname.sdx, subname
+
+bdss.pairs <- compare.dedup(bdss,blockfld=c(17),
+   exclude=c(1,2,15,18,19),strcmp=c(25),strcmpfun=NameContains.func)
+
+# the function compare.dedup allows one to specify only one string comparator
+# function (which I used for subname). Here I use CodeContains.func() to compute a
+# new vector of comparator values for icdcodelist, and replace the default
+# vector in bdss.pairs$pairs.
+
+codecompare <- CodeContains.func(bdss$icdcodelist[bdss.pairs$pairs$id1],
+                            bdss$icdcodelist[bdss.pairs$pairs$id2])
+bdss.pairs$pairs$icdcodelist <- codecompare
+
+bdss.pairs.fs  <- fsWeights(bdss.pairs)
+
+start <- proc.time()
+   bdss.pairs.em <- emWeights(bdss.pairs)
+proc.time() - start
+
+bdss.train <- getMinimalTrain(bdss.pairs.fs,nEx=2)
+bdss.train <- editMatch(bdss.train)
+
+bdss.model  <- trainSupv(bdss.train,method="bagging")
+bdss.result <- classifySupv(bdss.model,newdata=bdss.pairs.fs)
+
+table(cut(bdss.result$Wdata,breaks=c(-100,-35,0,25,50,75,100,125,150,175,250)),
+      bdss.result$prediction)
+%@
+\end{verbatim}
+\efs
+
+
+%\begin{figure}
+%<<density1,fig=T,echo=F,results=hide,width=9,height=9>>=
+savepar <- par(mfrow=c(3,1),mar=c(3,4,3,1))
+plot(density(bdss.result$Wdata,adjust=2),main='Fellegi-Sunter weights',xlab='',las=1)
+lines(density(bdss.result$Wdata[bdss.result$prediction=='N'],adjust=10),col=2,lwd=2)
+lines(density(bdss.result$Wdata[bdss.result$prediction=='L'],adjust=3),col=4,lwd=2)
+par(savepar)
+%@
+%\caption{\label{density1}Density plot of weights from the 2001--2013 data.}
+%\end{figure}
+
+\begin{table}[ht]
+\centering
+\caption{\label{bdssweights}Distribution of Fellegi-Sunter weights
+  among predicted links and nonlinks in the BDSS deduplication results.}
+\begin{tabular}{lrrr}
+  \hline
+group & weight & nonlink & link \\
+  \hline
+1  & (-100,-35] & 604307 & 0     \\
+2  & (-35,0]    & 6911   & 999   \\
+3  & (0,25]     & 1696   & 2947  \\
+4  & (25,50]    & 199    & 9906  \\
+5  & (50,75]    & 574    & 14864 \\
+6  & (75,100]   & 845    & 16162 \\
+7  & (100,125]  & 500    & 31841 \\
+8  & (125,150]  & 191    & 78559 \\
+9  & (150,175]  & 156    & 23280 \\
+10 & (175,250]  & 0      & 25137 \\
+   \hline
+\end{tabular}
+\end{table}
+
+The distribution of weights shows a wider spread of high weights than
+I have seen in other data sets, and shows a high number of pairs with
+high weights that are predicited not to be links
+(\autoref{bdssweights}). These features occur
+because there are many fields with in BDSS with a lot of missing
+information (first names, guardian names, guardian phone numbers), and
+because there are a lot of pairs that have records for twins.
+
+I will do a manual review of all the predicted links in group 2 and
+all the predicted nonlinks in groups 4--9. I will manually code a random
+sample of 200 for each of these groups: the nonlinks in group 2, all
+pairs in groups 1, 3 and 10, and the links in groups 4--9. Therefore,
+I will manually review 5,464 pairs.
+
+I will label each record pair with a stratum identifier as follows:
+
+\begin{tabular}{lp(5in}r}
+  stratum & definition & sample size\\ \hline
+  1       & non-links with weight $\le$ -35  & 200 \\
+  2       & sampled with certainty (links with weight $\le$ 0; non-links with weight $>$ 25) & \\
+  3       & non-links with -35 $<$ weight $\le $ 0 & 200 \\
+  4       & links and non-links with 0 $<$ weight $\le$ 25 & 200 \\
+  5       & links with 25 $<$ weight $\le$ 50 & 200 \\
+  6       & links with 50 $<$ weight $\le$ 75 & 200 \\
+  7       & links with 75 $<$ weight $\le$ 100 & 200 \\
+  8       & links with 100 $<$ weight $\le$ 125 & 200 \\
+  9       & links with 125 $<$ weight $\le$ 150 & 200 \\
+ 10       & links with 150 $<$ weight $ \le$ 175 & 200 \\
+ 11       & links with weight $>$ 175 & 200 \\ \hline
+\end{tabular}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+stratum <- rep(NA,length(bdss.result$prediction))
+for(i in 1:length(stratum)){
+   if(bdss.result$Wdata[i] <= -35)  {stratum[i] <- 1}
+   else if ((bdss.result$prediction[i] == 'L' & bdss.result$Wdata[i] <= 0) |
+            (bdss.result$prediction[i] == 'N' & bdss.result$Wdata[i] > 25))   {stratum[i] <- 2}
+   else if (bdss.result$prediction[i] == 'N'  & bdss.result$Wdata[i] > -35   &
+             bdss.result$Wdata[i] <= 0)  {stratum[i] <- 3}
+   else if (bdss.result$Wdata[i] > 0         & bdss.result$Wdata[i] <= 25)  {stratum[i] <- 4}
+   else if (bdss.result$prediction[i] == 'L'  & bdss.result$Wdata[i] > 25     &
+             bdss.result$Wdata[i] <= 50) {stratum[i] <- 5}
+   else if (bdss.result$prediction[i] == 'L'  & bdss.result$Wdata[i] > 50    &
+             bdss.result$Wdata[i] <= 75) {stratum[i] <- 6}
+   else if (bdss.result$prediction[i] == 'L'  & bdss.result$Wdata[i] > 75    &
+             bdss.result$Wdata[i] <= 100) {stratum[i] <- 7}
+   else if (bdss.result$prediction[i] == 'L'  & bdss.result$Wdata[i] > 100    &
+             bdss.result$Wdata[i] <= 125) {stratum[i] <- 8}
+   else if (bdss.result$prediction[i] == 'L'  & bdss.result$Wdata[i] > 125    &
+             bdss.result$Wdata[i] <= 150) {stratum[i] <- 9}
+   else if (bdss.result$prediction[i] == 'L'  & bdss.result$Wdata[i] > 150    &
+             bdss.result$Wdata[i] <= 175) {stratum[i] <- 10}
+   else if (bdss.result$Wdata[i] > 175)   {stratum[i] <- 11}
+   else stratum[i] <- 99
+}
+bdss.result$stratum <- stratum
+
+tab <- table(bdss.result$stratum)
+strata.count <- data.frame(tab,c(200,tab[2],200,200,200,200,200,200,200,200,200))
+colnames(strata.count) <- c('stratum','N','n')
+rm(tab)
+
+strat.f <- data.frame(bdss.result$pairs[,c(1,2)],stratum=bdss.result$stratum,
+                      Wdata=bdss.result$Wdata,prediction=bdss.result$prediction)
+
+set.seed(3453485)
+sample1 <- strat.f[which(strat.f$stratum==1),][sample(strata.count[1,2],strata.count[1,3]),]
+sample2 <- strat.f[which(strat.f$stratum==2),]
+sample3 <- strat.f[which(strat.f$stratum==3),][sample(strata.count[3,2],strata.count[3,3]),]
+sample4 <- strat.f[which(strat.f$stratum==4),][sample(strata.count[4,2],strata.count[4,3]),]
+sample5 <- strat.f[which(strat.f$stratum==5),][sample(strata.count[5,2],strata.count[5,3]),]
+sample6 <- strat.f[which(strat.f$stratum==6),][sample(strata.count[6,2],strata.count[6,3]),]
+sample7 <- strat.f[which(strat.f$stratum==7),][sample(strata.count[7,2],strata.count[7,3]),]
+sample8 <- strat.f[which(strat.f$stratum==8),][sample(strata.count[8,2],strata.count[8,3]),]
+sample9 <- strat.f[which(strat.f$stratum==9),][sample(strata.count[9,2],strata.count[9,3]),]
+sample10 <- strat.f[which(strat.f$stratum==10),][sample(strata.count[10,2],strata.count[10,3]),]
+sample11 <- strat.f[which(strat.f$stratum==11),][sample(strata.count[11,2],strata.count[11,3]),]
+allsamples <- rbind(sample1,sample2,sample3,sample4,sample5,sample6,sample7,sample8,sample9,
+                    sample10,sample11)
+set.seed(seed=NULL)
+
+bdss.sample            <- bdss.result[rownames(allsamples)]
+bdss.sample$Wdata      <- allsamples$Wdata
+bdss.sample$prediction <- allsamples$prediction
+bdss.sample$stratum    <- allsamples$stratum
+
+bdss.sample <- editMatch(bdss.sample)
+%@
+\end{verbatim}
+\efs
+
+\subsection{Redo the deduplication}
+
+After doing all the work above, I found that the model did a very poor
+job of making the correct link prediction among record pairs in which
+the first name is missing on one member of the pair. I score these as
+a link if there is other evidence that they are the same person, such
+as the same last name, but the model did not predict them to be a
+link. So I manually coded a sample of such pairs, added them to the
+training set, and created a new model.
+
+I will check the differences in the first sample I coded, and
+add that sample to the training set, create a predictive model, and
+use it to produce a new set of results.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+bdss.s.coded <- bdss.sample
+newvec <- bdss.sample$pairs$is_match + as.numeric(bdss.sample$prediction)
+# values of 2 or 3 are disagreements
+bdss.s.coded$pairs$is_match <- newvec
+pairs.ordered <- bdss.s.coded$pairs[order(bdss.s.coded$pairs$is_match),]
+bdss.s.coded$pairs <- pairs.ordered
+
+bdss.s.checked <- editMatch(bdss.s.coded)
+# recode the values of is_match, to account for those I changed
+# I recoded all values of 2 or 3 to 1 (=nonlink) or 4 (=link)
+oldvec <- bdss.s.checked$pairs$is_match
+for(i in 1:length(oldvec))newvec[i] <- if(oldvec[i] == 1)0 else 1
+bdss.s.checked$pairs$is_match <- newvec
+
+bdss.train2 <- bdss.train
+bdss.train2$pairs <- rbind(bdss.train$pairs,bdss.s.checked$pairs)
+bdss.model2  <- trainSupv(bdss.train2,method="bagging")
+bdss.result2 <- classifySupv(bdss.model2,newdata=bdss.pairs.fs)
+
+table(cut(bdss.result2$Wdata,breaks=c(-100,-35,0,25,50,75,100,125,150,175,250)),
+      bdss.result2$prediction)
+# extract the pairs that were predicted differently than with the
+# first model
+bdss.diff <- bdss.result2[bdss.result$prediction != bdss.result2$prediction]
+bdss.diff <- editMatch(bdss.diff)
+%@
+\end{verbatim}
+\efs
+
+I want to combine the manual coding that I have done in bdss.sample
+and bdss.diff with the new results, then extract the pairs that still
+need manual review, and manually code a new random sample for evaluation.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+library(plyr)
+samplepairs <- bdss.sample$pairs[,c(1,2,23)]
+diffpairs   <- bdss.diff$pairs[,c(1,2,23)]
+diffpairs   <- rename(diffpairs,c('is_match'='diffmatch'))
+bothpairs   <- merge(samplepairs,diffpairs,by=c(1,2),all=T)
+
+# also, I create a link object with the pairs in which the
+# manual coding in sample and diff does not match
+
+bothpairs2 <- merge(bdss.sample$pairs,diffpairs,by=c(1,2),all.x=T)
+samplediff <- bdss.sample
+samplediff$pairs <- bothpairs2
+differences <- samplediff[samplediff$pairs$is_match != samplediff$pairs$diffmatch &
+               !is.na(samplediff$pairs$is_match) & !is.na(samplediff$pairs$diffmatch)]
+differences <- editMatch(differences)
+
+# it turns out that my review of the differences agrees completely with
+# the coding in bdss.diff, so i will use that to override codes in bdss.sample
+
+bothpairs$goodmatch <- rep(NA,dim(bothpairs)[1])
+for(i in 1:dim(bothpairs)[1])bothpairs$goodmatch[i] <-
+      if(is.na(bothpairs$diffmatch[i]))bothpairs$is_match[i] else bothpairs$diffmatch[i]
+
+# after extracting records for manual review and drawing a new sample, below,
+# I will add the match codes from bothpairs$goodmatch
+
+table(cut(bdss.result2$Wdata,breaks=c(-100,-35,0,25,50,75,100,125,150,175,250)),
+      bdss.result2$prediction)
+%@
+\end{verbatim}
+\efs
+
+%\begin{figure}
+%<<density2,fig=T,echo=F,results=hide,width=9,height=9>>=
+plot(density(bdss.result2$Wdata,adjust=2),main='Fellegi-Sunter weights',xlab='',las=1)
+lines(density(bdss.result2$Wdata[bdss.result2$prediction=='N'],adjust=10),col=2,lwd=2)
+lines(density(bdss.result2$Wdata[bdss.result2$prediction=='L'],adjust=3),col=4,lwd=2)
+%@
+%\caption{\label{density2}Density plot of weights from the 2001--2013 data.}
+%\end{figure}
+
+\begin{table}[ht]
+\centering
+\caption{\label{bdssweights2}Distribution of Fellegi-Sunter weights
+  among predicted links and nonlinks in the BDSS deduplication results
+  (second try).}
+\begin{tabular}{lrrr}
+  \hline
+group & weight & nonlink & link \\
+  \hline
+1  & (-100,-35]  & 604307 & 0 & 0     \\
+2  &   (-35,0]   & 6836   & 0 & 1074  \\
+3  &   (0,25]    & 783    & 0 & 3860  \\
+4  &   (25,50]   & 177    & 0 & 9928  \\
+5  &   (50,75]   & 549    & 0 & 14889 \\
+6  &   (75,100]  & 840    & 0 & 16167 \\
+7  &   (100,125] & 489    & 0 & 31852 \\
+8  &   (125,150] & 197    & 0 & 78553 \\
+9  &   (150,175] & 156    & 0 & 23280 \\
+10 &   (175,250] & 0      & 0 & 25137 \\
+   \hline
+\end{tabular}
+\end{table}
+
+I will do a manual review of all the predicted links in group 2 and
+all the predicted nonlinks in groups 3--9. I will manually code a random
+sample of 200 for each of these groups: the nonlinks in group 2, all
+pairs in groups 1 and 10, and the links in groups 3--9. Therefore,
+I will manually review 6,265 pairs (but many of these have already
+been reviewed above).
+
+I will label each record pair with a stratum identifier as follows:
+
+\begin{tabular}{lp(5in}r}
+  stratum & definition & sample size\\ \hline
+  1       & non-links with weight $\le$ -35  & 200 \\
+  2       & sampled with certainty (links with weight $\le$ 0; non-links with weight $>$ 0) & \\
+  3       & non-links with -35 $<$ weight $\le $ 0 & 200 \\
+  4       & links with 0 $<$ weight $\le$ 25 & 200 \\
+  5       & links with 25 $<$ weight $\le$ 50 & 200 \\
+  6       & links with 50 $<$ weight $\le$ 75 & 200 \\
+  7       & links with 75 $<$ weight $\le$ 100 & 200 \\
+  8       & links with 100 $<$ weight $\le$ 125 & 200 \\
+  9       & links with 125 $<$ weight $\le$ 150 & 200 \\
+ 10       & links with 150 $<$ weight $ \le$ 175 & 200 \\
+ 11       & links with weight $>$ 175 & 200 \\ \hline
+\end{tabular}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+stratum <- rep(NA,length(bdss.result2$prediction))
+for(i in 1:length(stratum)){
+   if(bdss.result2$Wdata[i] <= -35)  {stratum[i] <- 1}
+   else if ((bdss.result2$prediction[i] == 'L' & bdss.result2$Wdata[i] <= 0) |
+            (bdss.result2$prediction[i] == 'N' & bdss.result2$Wdata[i] > 0))   {stratum[i] <- 2}
+   else if (bdss.result2$prediction[i] == 'N'  & bdss.result2$Wdata[i] > -35   &
+             bdss.result2$Wdata[i] <= 0)  {stratum[i] <- 3}
+   else if (bdss.result2$prediction[i] == 'L'  & bdss.result2$Wdata[i] > 0     &
+             bdss.result2$Wdata[i] <= 25) {stratum[i] <- 4}
+   else if (bdss.result2$prediction[i] == 'L'  & bdss.result2$Wdata[i] > 25     &
+             bdss.result2$Wdata[i] <= 50) {stratum[i] <- 5}
+   else if (bdss.result2$prediction[i] == 'L'  & bdss.result2$Wdata[i] > 50    &
+             bdss.result2$Wdata[i] <= 75) {stratum[i] <- 6}
+   else if (bdss.result2$prediction[i] == 'L'  & bdss.result2$Wdata[i] > 75    &
+             bdss.result2$Wdata[i] <= 100) {stratum[i] <- 7}
+   else if (bdss.result2$prediction[i] == 'L'  & bdss.result2$Wdata[i] > 100    &
+             bdss.result2$Wdata[i] <= 125) {stratum[i] <- 8}
+   else if (bdss.result2$prediction[i] == 'L'  & bdss.result2$Wdata[i] > 125    &
+             bdss.result2$Wdata[i] <= 150) {stratum[i] <- 9}
+   else if (bdss.result2$prediction[i] == 'L'  & bdss.result2$Wdata[i] > 150    &
+             bdss.result2$Wdata[i] <= 175) {stratum[i] <- 10}
+   else if (bdss.result2$Wdata[i] > 175)   {stratum[i] <- 11}
+   else stratum[i] <- 99
+}
+bdss.result2$stratum <- stratum
+
+tab <- table(bdss.result2$stratum)
+strata.count <- data.frame(tab,c(200,tab[2],200,200,200,200,200,200,200,200,200))
+colnames(strata.count) <- c('stratum','N','n')
+rm(tab)
+
+strat.f <- data.frame(bdss.result2$pairs[,c(1,2)],stratum=bdss.result2$stratum,
+                      Wdata=bdss.result2$Wdata,prediction=bdss.result2$prediction)
+
+set.seed(7085701)
+sample1 <- strat.f[which(strat.f$stratum==1),][sample(strata.count[1,2],strata.count[1,3]),]
+sample2 <- strat.f[which(strat.f$stratum==2),]
+sample3 <- strat.f[which(strat.f$stratum==3),][sample(strata.count[3,2],strata.count[3,3]),]
+sample4 <- strat.f[which(strat.f$stratum==4),][sample(strata.count[4,2],strata.count[4,3]),]
+sample5 <- strat.f[which(strat.f$stratum==5),][sample(strata.count[5,2],strata.count[5,3]),]
+sample6 <- strat.f[which(strat.f$stratum==6),][sample(strata.count[6,2],strata.count[6,3]),]
+sample7 <- strat.f[which(strat.f$stratum==7),][sample(strata.count[7,2],strata.count[7,3]),]
+sample8 <- strat.f[which(strat.f$stratum==8),][sample(strata.count[8,2],strata.count[8,3]),]
+sample9 <- strat.f[which(strat.f$stratum==9),][sample(strata.count[9,2],strata.count[9,3]),]
+sample10 <- strat.f[which(strat.f$stratum==10),][sample(strata.count[10,2],strata.count[10,3]),]
+sample11 <- strat.f[which(strat.f$stratum==11),][sample(strata.count[11,2],strata.count[11,3]),]
+allsamples <- rbind(sample1,sample2,sample3,sample4,sample5,sample6,sample7,sample8,sample9,
+                    sample10,sample11)
+set.seed(seed=NULL)
+
+bdss.sample2            <- bdss.result2[rownames(allsamples)]
+bdss.sample2$Wdata      <- allsamples$Wdata
+bdss.sample2$prediction <- allsamples$prediction
+bdss.sample2$stratum    <- allsamples$stratum
+%@
+\end{verbatim}
+\efs
+
+Records in {\tt bdss.sample} and {\tt bdss.diff} have already been
+manually scored. Above, I combined those scores in {\tt bothpairs},
+and adjudicated the differences. The final score is in the field {\tt bothpairs\$goodmatch}.
+I need to be sure to sort the Wdata, stratum, and prediction columns
+in the same way I sort the pairs.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+library(plyr)
+samplepairs <- bdss.sample2$pairs
+samplepairs$Wdata      <- bdss.sample2$Wdata
+samplepairs$stratum    <- bdss.sample2$stratum
+samplepairs$prediction <- bdss.sample2$prediction
+codedpairs <- merge(samplepairs,bothpairs[,c(1,2,5)],by=c(1,2),all.x=T)
+codedpairs <- subset(codedpairs, select = -c(is_match))
+codedpairs <- rename(codedpairs, c('goodmatch'='is_match'))
+codedpairs <- codedpairs[order(codedpairs$is_match),]
+
+bdss.sample2$pairs <- codedpairs[,c(1:22,26)]
+bdss.sample2$Wdata      <- codedpairs$Wdata
+bdss.sample2$stratum    <- codedpairs$stratum
+bdss.sample2$prediction <- codedpairs$prediction
+rm(codedpairs)
+
+bdss.sample2 <- editMatch(bdss.sample2)
+
+%@
+\end{verbatim}
+\efs
+
+Three tasks:
+\begin{enumerate}
+  \item replace predictions in bdss.result2 with corrected predictions if
+the value of is\_match in bdss.sample2 indicates the prediction was wrong
+\item form groups of linked records
+  \item measure the linking accuracy, according to the results in bdss.sample2.
+\end{enumerate}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+library(plyr)
+
+# give values of 0 and 1 for nonlink/link
+
+allresults <- getPairs(bdss.result2,single.rows=T,sort=F)
+allresults$prediction <- (as.numeric(bdss.result2$prediction)-1)/2
+allresults <- subset(allresults,select=c('id1','id2','visitid.1',
+                     'visitid.2','Weight','prediction'))
+
+bdss.sample2$prediction.corrected <- bdss.sample2$pairs$is_match
+sampleresults <- getPairs(bdss.sample2,single.rows=T,sort=F)
+sampleresults$prediction <- bdss.sample2$prediction.corrected
+sampleresults <- subset(sampleresults,select=c('id1','id2','prediction'))
+
+allresults.corrected <- merge(allresults,sampleresults,by=c('id1','id2'),all=T)
+
+allresults.corrected$prediction <- rep(NA,length(allresults.corrected$prediction.x))
+allresults.corrected[is.na(allresults.corrected$prediction.y) &
+                     allresults.corrected$prediction.x==1,]$prediction <- 1
+allresults.corrected[is.na(allresults.corrected$prediction.y) &
+                     allresults.corrected$prediction.x==0,]$prediction <- 0
+allresults.corrected[!is.na(allresults.corrected$prediction.y) &
+                     allresults.corrected$prediction.y==1,]$prediction <- 1
+allresults.corrected[!is.na(allresults.corrected$prediction.y) &
+                     allresults.corrected$prediction.y==0,]$prediction <- 0
+allresults.corrected <- subset(allresults.corrected,select=c('id1','id2','visitid.1',
+                     'visitid.2','Weight','prediction'))
+%@
+\end{verbatim}
+\efs
+
+Manually review pairs which are predicted to be links, but have
+non-matching first names.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+bdss.result3 <- bdss.result2
+bdss.result3$prediction <- allresults.corrected$prediction
+checktwins <- bdss.result3[bdss.result3$pairs$firstname==0 &
+              !is.na(bdss.result3$pairs$firstname) & bdss.result3$prediction == 1]
+checktwins <- editMatch(checktwins)
+checktwins.corrected <- data.frame(id1=checktwins$pairs$id1,id2=checktwins$pairs$id2,
+                                   prediction.twin=checktwins$pairs$is_match)
+allresults.corrected2 <- merge(allresults.corrected,checktwins.corrected,by=c('id1','id2'),all=T)
+allresults.corrected2[!is.na(allresults.corrected2$prediction.twin) &
+                      allresults.corrected2$prediction.twin==0,]$prediction <- 0
+
+# correct some particular pairs
+checkthese <- bdss.result3[bdss.result3$pairs$id1 %in% c(41717,41718,41696,3510,3511) |
+                           bdss.result3$pairs$id2 %in% c(41717,41718,41696,3510,3511)]
+checkthese <- editMatch(checkthese)
+checkthese.corrected <- data.frame(id1=checkthese$pairs$id1,id2=checkthese$pairs$id2,
+                                   prediction.these=checkthese$pairs$is_match)
+allresults.corrected3 <- merge(allresults.corrected2,checkthese.corrected,by=c('id1','id2'),all=T)
+allresults.corrected3[!is.na(allresults.corrected3$prediction.these) &
+                      allresults.corrected3$prediction.these==0,]$prediction <- 0
+%@
+\end{verbatim}
+\efs
+
+
+\subsubsection{Extracting the data from the links}
+
+The dataframe {\tt allresults.corrected} has data for all the pairs. Remember that birthdate was
+used as a blocking field, so when the original file has $n$ records for a particular
+birthdate, the pairs file has $n-1$ pairs for that birthdate. There are 52 records
+in {\tt bdss} that have unique birthdates, and are not in the pairs data at all.
+Remember also that even when a record shares a birthdate with other records, it may be
+the last in the blocking set (and therefore not be listed in the {\tt id1} field), and
+may not link with any other records.
+
+The code below produces groups of pairs that have links between them. I run this on the
+subset of pairs that link to each other.
+
+Concerning the numbers: there are 72410 different records in the 2001--2014 BDSS data.
+These records have 4,727 unique birthdates. There are 67,683 unique values of {\tt id1}
+in the pairs data.
+
+\bfs
+\begin{verbatim}
+# this takes several minutes to run
+linkgroups.1 <- matrix(data=rep(NA,72410*100),nrow=72410)
+templink <- allresults.corrected3[allresults.corrected3$prediction==1,c(1:6)]
+start <- proc.time()
+for(i in 1:72410){
+   vec1 <- c(templink$id2[templink$id1==i],templink$id1[templink$id2==i])
+   vec2 <- rep(NA,100-length(vec1))
+   linkgroups.1[i,] <- c(vec1,vec2)
+}
+proc.time() - start
+
+\end{verbatim}
+\efs
+
+Do this iteratively until the resulting matrix doesn't change and I should have what I
+need. I think I can determine when the process is done by finding the sums of the
+matrices {\tt linkgroups.2, linkgroups.3} etc, and stopping when the sums don't change.
+
+\bfs
+\begin{verbatim}
+# this takes several minutes to run
+linkgroups.2 <- matrix(data=rep(NA,72410*100),nrow=72410)
+for(i in 1:72410){
+   templink.1 <- c(i,linkgroups.1[i,])
+   for(j in 1:100)templink.1 <- c(templink.1,linkgroups.1[linkgroups.1[i,][j],])
+   templink.2 <- unique(templink.1)
+   linkgroups.2[i,] <- c(templink.2,rep(NA,100-length(templink.2)))
+}
+
+> sum(linkgroups.2,na.rm=T)
+[1] 17470022752
+
+linkgroups.3 <- matrix(data=rep(NA,72410*100),nrow=72410)
+for(i in 1:72410){
+   templink.1 <- c(i,linkgroups.2[i,])
+   for(j in 1:100)templink.1 <- c(templink.1,linkgroups.2[linkgroups.2[i,][j],])
+   templink.2 <- unique(templink.1)
+   linkgroups.3[i,] <- c(templink.2,rep(NA,100-length(templink.2)))
+}
+
+> sum(linkgroups.3,na.rm=T)
+[1] 17470650896
+
+linkgroups.4 <- matrix(data=rep(NA,72410*100),nrow=72410)
+for(i in 1:72410){
+   templink.1 <- c(i,linkgroups.3[i,])
+   for(j in 1:100)templink.1 <- c(templink.1,linkgroups.3[linkgroups.3[i,][j],])
+   templink.2 <- unique(templink.1)
+   linkgroups.4[i,] <- c(templink.2,rep(NA,100-length(templink.2)))
+}
+
+> sum(linkgroups.4,na.rm=T)
+[1] 17470650896
+
+rm(linkgroups.4)
+rm(templink)
+\end{verbatim}
+\efs
+
+So, {\tt linkgroups.3} contains rows with pair groups. Each pair group is listed in
+its entirety in every row that is a member of the pair group, but the elements are not
+sorted in the same order. See below. I will sort the rows, then remove duplicates.
+
+\begin{verbatim}
+> linkgroups.3[1:8,1:10]
+     [,1]  [,2]  [,3]  [,4]  [,5]  [,6]  [,7] [,8] [,9] [,10]
+[1,]    1     2   231  1045 15416 35628    NA   NA   NA    NA
+[2,]    2   231  1045 15416 35628     1    NA   NA   NA    NA
+[3,]    3    NA    NA    NA    NA    NA    NA   NA   NA    NA
+[4,]    4     5   228   245 25317 34794    NA   NA   NA    NA
+[5,]    5   228   245 25317 34794     4    NA   NA   NA    NA
+[6,]    6    NA    NA    NA    NA    NA    NA   NA   NA    NA
+[7,]    7 32803 32824 32858 33013 33027 33118   NA   NA    NA
+[8,]    8    NA    NA    NA    NA    NA    NA   NA   NA    NA
+.
+.
+.
+> linkgroups.3[25857:25865,1:10]
+       [,1]  [,2]  [,3]  [,4]  [,5]  [,6]  [,7]  [,8]  [,9] [,10]
+ [1,] 25857 26599 28384 30117 32417 34131 34221  3951 14079 17573
+ [2,] 25858  6313  9541 23762    NA    NA    NA    NA    NA    NA
+ [3,] 25859 25860 26738 26740 27090 27104 27374 29735 29822 29976
+ [4,] 25860 26738 26740 27090 27104 27374 29735 29822 29976 30417
+ [5,] 25861 26097 27218 28325 29877 36425  5121 24309 24310    NA
+ [6,] 25862 27674 35527 39687 23891    NA    NA    NA    NA    NA
+ [7,] 25863 34174 34667  5674    NA    NA    NA    NA    NA    NA
+ [8,] 25864 23830    NA    NA    NA    NA    NA    NA    NA    NA
+ [9,] 25865 22399    NA    NA    NA    NA    NA    NA    NA    NA
+\end{verbatim}
+
+\bfs
+\begin{verbatim}
+linkgroups.5 <- linkgroups.3
+for(i in 1:72410)linkgroups.5[i,] <- sort(linkgroups.5[i,],na.last=T)
+
+linkgroups.6 <- unique(linkgroups.5)
+
+sum(as.numeric(linkgroups.6),na.rm=T)-sum(as.numeric(1:72410))
+[1] 0
+\end{verbatim}
+\efs
+
+The sum of the elements in the matrix {\tt linkgroups.6} is equal to the sum of the
+numbers 1 to 72,410, confirming that each birth defects record is listed in one and only
+one linkage group.
+
+I will identify each linkage group by the index of its first member. I want to write out
+a two-column data frame, with the first column holding the linkage group index, and the
+second column holding the index value for each of the BDSS records. So there will be
+72,410 rows in the data frame. Then I can read this into SAS and create a SAS dataset
+that identifies all the linkage groups. Or I can use this in R during the next stage of
+record linkage.
+
+This does the trick:
+
+\bfs
+\begin{verbatim}
+BDSSlinkedgroups <- matrix(data=rep(NA,72410*2),ncol=2)
+
+j <- 1
+i <- 1
+while(TRUE){
+   k <- 1
+   while(TRUE){
+      BDSSlinkedgroups[i,1] <- linkgroups.6[j,1]
+      BDSSlinkedgroups[i,2] <- linkgroups.6[j,k]
+      i <- i+1
+      k <- k+1
+      if(is.na(linkgroups.6[j,k])){
+         j <- j+1
+         break
+         }
+      }
+   if(j > dim(linkgroups.6)[1])break
+   }
+
+\end{verbatim}
+\efs
+
+
+Now I write it out to a csv file to read into SAS.
+
+\bfs
+\begin{verbatim}
+write.csv(BDSSlinkedgroups,file="c:\\PGPlead\\BDSS\\linkedgroups2014.csv",
+   row.names=F)
+\end{verbatim}
+\efs
+
+\subsection{Create linked groups in the SAS data file}
+
+I will merge the file containing the linked group indexes with the SAS file containing
+all the data, including {\tt visit\_id}, the BDSS record identifier.
+
+\begin{lstlisting}[language=sas,caption=Merge the linked groups with {\tt visit\_id}]
+libname bdlink 'c:\PGPlead\BDSS';
+PROC IMPORT OUT= WORK.links
+            DATAFILE= "C:\PGPlead\BDSS\linkedgroups2014.csv"
+            DBMS=CSV REPLACE;
+     GETNAMES=YES;
+     DATAROW=2;
+RUN;
+data bdlink.dedup2014(drop=v2);
+   length index $ 6;
+   set links(rename=(v1=linkgroup));
+   index = put(v2,z6.0);
+run;
+proc sort data=bdlink.dedup2014;
+   by index;
+run;
+proc sort data=bdlink.bdss2001_2013;
+   by index;
+run;
+
+data bdlink.dedupgroups2014;
+   merge bdlink.dedup2014 bdlink.bdss2001_2013;
+   by index;
+run;
+proc sort data=bdlink.dedupgroups2014;
+   by linkgroup index;
+run;
+\end{lstlisting}
+
+The code below does a check for twins classified into the same link group. If I find any,
+I manually code them in R (see where the {\tt checkthese} dataframe is used above).
+
+\begin{lstlisting}[language=sas,caption=check for linked twins]
+libname bdlink 'c:\PGPlead\BDSS';
+data test1;
+   set bdlink.dedupgroups2014;
+   firstname_u = upcase(firstname);
+run;
+proc sort data=test1;
+   by linkgroup firstname_u;
+run;
+data test2;
+   set test1;
+   by linkgroup firstname_u;
+   flag = 0;
+   if first.firstname_u and not first.linkgroup then flag = 1;
+run;
+proc sort data=test2;
+   by linkgroup descending flag;
+run;
+data test3;
+   retain flag2;
+   set test2;
+   by linkgroup;
+   if first.linkgroup then flag2 = flag;
+   if flag2 = 1 then output;
+run;
+proc print data=test3 uniform;
+   by linkgroup;
+   var index linkgroup visitid firstname middlename lastname sexcode zip
+       birthdate glastname medicalrecordno;
+   format birthdate mmddyy10.;
+run;
+\end{lstlisting}
+
+The file is too big to put into Excel, so I write out a csv file.
+
+\begin{lstlisting}[language=sas,caption=Write out a csv file]
+data temp;
+    set bdlink.dedupgroups2014(keep=linkgroup visitid);
+run;
+proc export data=temp
+            FILE= "C:\PGPlead\BDSS\dedupgroups2014.csv"
+            DBMS=csv
+            REPLACE;
+RUN;
+
+\end{lstlisting}
+
+The SAS dataset {\tt dedupgroups} has the linked groups, merged with the {\tt visit\_id}
+identifier. The csv file named {\tt dedupgroups2014.csv} also contains the link-group
+information.
+
+
+\section{Link to birth certificate}
+
+The first task is to determine which member of a link group I will try to link to the
+birth certificate file. The deduplication found that there are 33,709 different children
+among the 72,410 birth defect records for children born between January 1, 2001 and
+December 31, 2013. Among these children, 21,893 had only one birth defect record; 11,816 had
+more than one record. I will make a list of variables that can be used to match with the
+birth certificate file.
+I will start with the earliest birth defect record in the linked group. If there are
+empty fields in that record, I will attempt to fill in the missing data with data
+from later records, working in order from the earliest towards latest until every field
+is filled in or the latest record is reached.
+
+I will clean the birth defects data with
+the CHS/OFM SAS programs (I noticed a lot of records with the middle initial in the first
+name field). I will remove the {\tt zip\_mail} field from the datasets since it is
+empty of data.
+
+
+\begin{tabular}{ll}
+BD record               & birth file   \\ \hline
+birth date              & same         \\
+first name              & same         \\
+middle initial          & same         \\
+last name               & same         \\
+guardian first name     & mother or father first name \\
+guardian middle initial & mother or father middle initial \\
+guardian last name      & mother or father last name, or mother maiden name \\
+sex                     & same         \\
+zip code                & same         \\
+guardian phone number   & mother's phone number \\
+\hline
+\end{tabular}
+
+The SAS dataset file {\tt dedupgroups2014} has deduplicated birth
+defects records for children born during 2001--2013 (the file's name
+comes from the year it was created).
+
+\begin{lstlisting}[language=sas,caption=find \& create birth defect records for linking]
+libname bdlink 'c:\PGPlead\BDSS';
+proc sort data=bdlink.dedupgroups2014;
+   by linkgroup admitdate;
+run;
+data onerecord(drop=gphone) multrecord(drop=gphone);
+   length phone $ 12;
+   set bdlink.dedupgroups2014(rename=(middlename=middleinit));
+   by linkgroup;
+   if upcase(firstname) in (
+      'B',
+      'BA7088291 ',
+      'BA8976185 ',
+      'BABY',
+      'BABY 1 BOY',
+      'BABY 1 GIRL',
+      'BABY 2 ',
+      'BABY 2 BOY',
+      'BABY 2 GIRL',
+      'BABY B ',
+      'BABY BOY ',
+      'BABY BOY 1',
+      'BABY BOY 2',
+      'BABY BOY A',
+      'BABY BOY B',
+      'BABY G',
+      'BABY GIR ',
+      'BABY GIRL ',
+      'BABY GIRL 1',
+      'BABY GIRL A',
+      'BABY GIRL STILL',
+      'BABY ONE',
+      'BABYBOY ',
+      'BABYGIRL ',
+      'BABYMALE',
+      'BABYONE BOY',
+      'BB  ',
+      'BB2 ',
+      'BG  ',
+      'BOY ',
+      'BOY 2',
+      'BOY 3',
+      'BOY A',
+      'BOY B ',
+      'BOY ONE',
+      'BOY TWIN A',
+      'BOY-ONE ',
+      'BOYA',
+      'BOYB',
+      'BOYC',
+      'By453986283',
+      'By464016161',
+      'By465366151',
+      'By466182375',
+      'By467332300',
+      'GIRL ',
+      'GIRL B ',
+      'GIRL C ',
+      'GIRL-ONE'
+      'Gl465818821',
+      'TWINBGIRL'
+      )
+      then firstname = '';
+   if gphone in ('(000)000-0000','0-000-0000') then gphone = '';
+   if zip = '99999' then zip = '';
+
+   if length(gphone) le 9 then phone = '';
+   if substr(gphone,1,1) = '(' then
+      phone = substr(gphone,2,3)||'-'||substr(gphone,6,3)||'-'||substr(gphone,10,4);
+   if '2' le substr(gphone,1,1) le '9' and length(gphone) = 12 then
+      phone = substr(gphone,1,12);
+   if '2' le substr(gphone,1,1) le '9' and length(gphone) = 10 then
+      phone = substr(gphone,1,3)||'-'||substr(gphone,4,3)||'-'||substr(gphone,7,4);
+
+   if first.linkgroup and last.linkgroup then output onerecord;
+   else output multrecord;
+run;
+
+data multrecord2(keep=linkgroup birthdate firstname middleinit lastname
+      gfirstname gmiddlename glastname sexcode zip phone);
+   retain bd_firstname bd_middleinit bd_lastname bd_gfirstname bd_gmiddlename
+      bd_glastname bd_sexcode bd_zip bd_phone;
+   set multrecord;
+   by linkgroup;
+   if first.linkgroup then do;
+      bd_firstname   = firstname  ;
+      bd_middleinit  = middleinit ;
+      bd_lastname    = lastname   ;
+      bd_gfirstname  = gfirstname ;
+      bd_gmiddlename = gmiddlename;
+      bd_glastname   = glastname  ;
+      bd_sexcode     = sexcode    ;
+      bd_zip         = zip        ;
+      bd_phone       = phone      ;
+      end;
+   if not first.linkgroup then do;
+      if bd_firstname   = '' then bd_firstname   = firstname  ;
+      if bd_middleinit  = '' then bd_middleinit  = middleinit ;
+      if bd_lastname    = '' then bd_lastname    = lastname   ;
+      if bd_gfirstname  = '' then bd_gfirstname  = gfirstname ;
+      if bd_gmiddlename = '' then bd_gmiddlename = gmiddlename;
+      if bd_glastname   = '' then bd_glastname   = glastname  ;
+      if bd_sexcode     = '' then bd_sexcode     = sexcode    ;
+      if bd_zip         = '' then bd_zip         = zip        ;
+      if bd_phone       = '' then bd_phone       = phone      ;
+      end;
+   if last.linkgroup then do;
+      firstname   = bd_firstname  ;
+      middleinit  = bd_middleinit ;
+      lastname    = bd_lastname   ;
+      gfirstname  = bd_gfirstname ;
+      gmiddlename = bd_gmiddlename;
+      glastname   = bd_glastname  ;
+      sexcode     = bd_sexcode    ;
+      zip         = bd_zip        ;
+      phone       = bd_phone      ;
+   output;
+   end;
+run;
+
+data bdlink.bdrecords(keep=linkgroup birthdate firstname middleinit lastname
+      phone dad_last dad_first dad_midd mom_maid mom_legal mom_first mom_midd
+      zip_resid zip_mail sex);
+   set multrecord2
+       onerecord(keep=linkgroup birthdate firstname middleinit lastname gfirstname
+         gmiddlename glastname sexcode zip phone);
+   firstname  = upcase(firstname);
+   lastname   = upcase(lastname);
+   middleinit = upcase(middleinit);
+   dad_last   = upcase(glastname);
+   dad_first  = upcase(gfirstname);
+   dad_midd   = upcase(gmiddlename);
+   mom_maid   = upcase(glastname);
+   mom_legal  = upcase(glastname);
+   mom_first  = upcase(gfirstname);
+   mom_midd   = upcase(gmiddlename);
+   zip_resid  = zip;
+   zip_mail   = zip;
+   sex        = substr(sexcode,1,1);
+run;
+proc sort data=bdlink.bdrecords;
+   by linkgroup;
+run;
+\end{lstlisting}
+
+For the OFM SAS programs, see \url{http://www.erdc.wa.gov/briefs/technical/default.asp}.
+As of April 26, 2012, the macro I used has been renamed to NormalizeNames.sas.
+
+\begin{lstlisting}[language=sas,caption=standardize names in the birth defects file]
+libname bdlink 'c:\PGPlead\BDSS';
+%include "c:\user\projects\BDSS\StandardizeNames.sas";
+%StandardizeNames(DsnIn=bdlink.bdrecords,
+                  DsnOut=tempout1,
+                  FirstName=firstname,
+                  MiddleName=middleinit,
+                  LastName=lastname);
+%StandardizeNames(DsnIn=tempout1,
+                  DsnOut=tempout2,
+                  FirstName=dad_first,
+                  MiddleName=dad_midd,
+                  LastName=dad_last);
+%StandardizeNames(DsnIn=tempout2,
+                  DsnOut=tempout3,
+                  FirstName=mom_first,
+                  MiddleName=mom_midd,
+                  LastName=mom_legal);
+data bdlink.bd_standnames;
+   set tempout3;
+   firstname = compress(firstname);
+   lastname  = compress(lastname);
+   dad_first = compress(dad_first);
+   dad_last  = compress(dad_last);
+   mom_first = compress(mom_first);
+   mom_maid  = compress(mom_maid);
+   mom_legal = compress(mom_legal);
+run;
+data tempbd;
+   set bdlink.bd_standnames(keep=linkgroup birthdate lastname firstname
+      middleinit sex dad_last dad_first dad_midd mom_maid mom_legal mom_first mom_midd
+      zip_resid phone);
+run;
+proc sort data=tempbd;
+   by linkgroup;
+run;
+proc export data=tempbd
+   outfile = 'c:\PGPlead\bdss\bd_deduped_01_13.csv'
+   dbms=csv
+   replace;
+run;
+\end{lstlisting}
+
+\subsection{Read the birth data}
+
+Read the birth files into SAS datasets and arrange the data to match the birth defect
+link records.
+
+\begin{lstlisting}[language=sas,caption=Read the birth file data]
+/*
+First, read in the data provided by CHS.
+
+File layout:
+PERSON-LAST-NAME           (A50)    1 - 50
+PERSON-FIRST-NAME          (A30)    51 - 80
+PERSON-MIDDLE-NAME         (A40)    81 - 120
+PERSON-SUFFIX              (A6)     121 - 126
+SEX                        (A1)     127
+PERSON-DOB                 (A8)     128 - 135      yyyymmdd format
+FA-LAST-NAME               (A50)    136 - 185
+FA-FIRST-NAME              (A30)    186 - 215
+FA-MIDDLE-NAME             (A40)    216 - 255
+FA-SUFFIX                  (A6)     256 - 261
+MO-MAIDEN-NAME             (A50)    262 - 311
+MO-FIRST-NAME              (A30)    312 - 341
+MO-MIDDLE-NAME             (A40)    342 - 381
+MO-LEGAL-NAME              (A50)    382 - 431
+RES-STREET                 (A35)    432 - 466
+RES-CITY-LITERAL           (A30)    467 - 496
+RES-STATE-ABBREV           (A02)    497 - 498
+RES-ZIP-CODE               (A9)     499 - 507
+MO-MAIL-ADDR-STREET        (A40)    508 - 547
+MO-MAIL-ADDR-CITY-LIT      (A40)    548 - 587
+MO-MAIL-ADDR-STATE-ABBREV  (A02)    588 - 589
+MO-MAIL-ADDR-ZIP-CODE      (A09)    590 - 598
+MO-RES-AREA-CODE           (A03)    599 - 601
+MO-RES-PHONE-NUM           (A07)    602 - 608
+MO-BIRTHPLACE              (A30)    609 - 638
+MO-DOB                     (A08)    639 - 646      yyyymmdd format
+FA-BIRTHPLACE              (A30)    647 - 676
+FA-DOB                     (A08)    677 - 684      yyyymmdd format
+CNTY-OF-BIRTH              (A02)    685 - 686
+EVENT-FACILITY-CODE        (N3)     687 - 689
+EVENT-FACILITY-NAME        (A50)    690 - 739
+*/
+
+%macro readbirth(year);
+data temp&year(drop=tphone index);
+   length phone $ 12 birthindex $9;
+   infile "c:\data\birth\fileswithnames\birdefct_cnty.&year" lrecl=740;
+   input
+      @1   lastname     $char25.
+      @51  firstname    $char15.
+      @81  middleinit   $char1.
+      @127 sex          $char1.
+      @128 birthdate    yymmdd8.
+      @136 dad_last     $char25.
+      @186 dad_first    $char15.
+      @216 dad_midd     $char1.
+      @262 mom_maid     $char25.
+      @312 mom_first    $char15.
+      @342 mom_midd     $char1.
+      @382 mom_legal    $char25.
+      @432 street_res   $char35.
+      @467 city_res     $char30.
+      @497 state_res    $char2.
+      @499 zip_resid    $char5.
+      @508 street_mail  $char40.
+      @548 city_mail    $char40.
+      @588 state_mail   $char2.
+      @590 zip_mail     $char5.
+      @599 tphone       $char10.
+      @609 mom_birplace $char30.
+      @639 mom_dob      yymmdd8.
+      @647 dad_birplace $char30.
+      @677 dad_dob      yymmdd8.
+      @687 hospcode     $char3.
+      @690 hospname     $char50.
+      ;
+   index+1;
+   birthindex = put(year(birthdate),4.)||put(index,z5.0);
+   if dad_first = 'NONE NAMED' then dad_first = '';
+   if tphone = '' then phone = '';
+   else phone = substr(tphone,1,3)||'-'||substr(tphone,4,3)||'-'||substr(tphone,7,4);
+run;
+%mend;
+
+%readbirth(2001);
+%readbirth(2002);
+%readbirth(2003);
+%readbirth(2004);
+%readbirth(2005);
+%readbirth(2006);
+%readbirth(2007);
+%readbirth(2008);
+%readbirth(2009);
+%readbirth(2010);
+%readbirth(2011);
+%readbirth(2012);
+
+data bdlink.birth2001_2012;
+   set temp2001 temp2002 temp2003 temp2004 temp2005 temp2006 temp2007 temp2008 temp2009
+       temp2010 temp2011 temp2012;
+run;
+
+%StandardizeNames(DsnIn=bdlink.birth2001_2012,
+                  DsnOut=tempout1b,
+                  FirstName=firstname,
+                  MiddleName=middleinit,
+                  LastName=lastname);
+%StandardizeNames(DsnIn=tempout1b,
+                  DsnOut=tempout2b,
+                  FirstName=dad_first,
+                  MiddleName=dad_midd,
+                  LastName=dad_last);
+%StandardizeNames(DsnIn=tempout2b,
+                  DsnOut=tempout3b,
+                  FirstName=mom_first,
+                  MiddleName=mom_midd,
+                  LastName=mom_legal);
+data bdlink.birth_standnames;
+   set tempout3b;
+   firstname = compress(firstname);
+   lastname  = compress(lastname);
+   dad_first = compress(dad_first);
+   dad_last  = compress(dad_last);
+   mom_first = compress(mom_first);
+   mom_maid  = compress(mom_maid);
+   mom_legal = compress(mom_legal);
+run;
+data tempbir;
+   set bdlink.birth_standnames(keep=birthindex birthdate lastname firstname
+      middleinit sex dad_last dad_first dad_midd mom_maid mom_legal mom_first mom_midd
+      zip_resid phone);
+run;
+proc sort data=tempbir;
+   by birthindex;
+run;
+proc export data=tempbir
+   outfile = 'c:\PGPlead\bdss\birth01_12.csv'
+   dbms=csv
+   replace;
+run;
+\end{lstlisting}
+
+\subsection{Link birth defects and births in R}
+
+\bfs
+\begin{verbatim}
+library(RecordLinkage)
+library(plyr)
+library(dplyr)
+
+# read in the full datasets for 2001-2012
+bdlink <- read.csv(file="c:\\PGPlead\\BDSS\\bd_deduped_01_13.csv")
+bdlink <- rename(bdlink, replace=c('dad_first'='dad.first',
+                 'dad_last'='dad.last', 'dad_midd'='dad.midd','mom_first'='mom.first',
+                 'mom_midd'='mom.midd','mom_legal'='mom.legal', 'mom_maid'='mom.maid',
+                 'zip_resid'='zip.resid'))
+bdlink$firstname  <- as.character(bdlink$firstname )
+bdlink$middleinit <- as.character(bdlink$middleinit)
+bdlink$lastname   <- as.character(bdlink$lastname  )
+bdlink$mom.first  <- as.character(bdlink$mom.first )
+bdlink$mom.midd   <- as.character(bdlink$mom.midd  )
+bdlink$mom.maid   <- as.character(bdlink$mom.maid  )
+bdlink$mom.legal  <- as.character(bdlink$mom.legal )
+bdlink$dad.first  <- as.character(bdlink$dad.first )
+bdlink$dad.midd   <- as.character(bdlink$dad.midd  )
+bdlink$dad.last   <- as.character(bdlink$dad.last  )
+bdlink$sex        <- as.character(bdlink$sex       )
+bdlink$phone      <- as.character(bdlink$phone     )
+
+bdlink$birthdate     <- as.Date(bdlink$birthdate,origin="1960-01-01")
+bdlink$firstname.sdx <- soundex(bdlink$firstname)
+bdlink$lastname.sdx  <- soundex(bdlink$lastname)
+bdlink$dad.first.sdx <- soundex(bdlink$dad.first)
+bdlink$dad.last.sdx  <- soundex(bdlink$dad.last)
+bdlink$mom.first.sdx <- soundex(bdlink$mom.first)
+bdlink$mom.maid.sdx  <- soundex(bdlink$mom.maid)
+bdlink$mom.legal.sdx <- soundex(bdlink$mom.legal)
+bdlink$subname       <- bdlink$lastname
+bdlink <- bdlink[,c(2,6,3:5,15,1,14,12,13,10,11,8,9,7,16:23)]
+
+birth <- read.csv(file="c:\\PGPlead\\BDSS\\birth01_12.csv")
+birth <- rename(birth, replace=c('dad_first'='dad.first',
+                 'dad_last'='dad.last', 'dad_midd'='dad.midd','mom_first'='mom.first',
+                 'mom_midd'='mom.midd','mom_legal'='mom.legal', 'mom_maid'='mom.maid',
+                 'zip_resid'='zip.resid'))
+birth$firstname  <- as.character(birth$firstname )
+birth$middleinit <- as.character(birth$middleinit)
+birth$lastname   <- as.character(birth$lastname  )
+birth$mom.first  <- as.character(birth$mom.first )
+birth$mom.midd   <- as.character(birth$mom.midd  )
+birth$mom.maid   <- as.character(birth$mom.maid  )
+birth$mom.legal  <- as.character(birth$mom.legal )
+birth$dad.first  <- as.character(birth$dad.first )
+birth$dad.midd   <- as.character(birth$dad.midd  )
+birth$dad.last   <- as.character(birth$dad.last  )
+birth$sex        <- as.character(birth$sex       )
+birth$phone      <- as.character(birth$phone     )
+birth$zip.resid  <- as.character(birth$zip.resid )
+
+birth$birthdate     <- as.Date(birth$birthdate,origin="1960-01-01")
+birth$firstname.sdx <- soundex(birth$firstname)
+birth$lastname.sdx  <- soundex(birth$lastname)
+birth$dad.first.sdx <- soundex(birth$dad.first)
+birth$dad.last.sdx  <- soundex(birth$dad.last)
+birth$mom.first.sdx <- soundex(birth$mom.first)
+birth$mom.maid.sdx  <- soundex(birth$mom.maid)
+birth$mom.legal.sdx <- soundex(birth$mom.legal)
+birth$subname       <- birth$lastname
+birth <- birth[,c(2,7,4,5,3,6,1,15,12,13,11,14,9,10,8,16:23)]
+
+\end{verbatim}
+\efs
+
+\bfs
+\begin{verbatim}
+%<<>>=
+# order of fields in both files is:
+#  [1] "birthindex"    "birthdate"     "firstname"     "middleinit"
+#  [5] "lastname"      "sex"           "phone"         "zip.resid"
+#  [9] "mom.first"     "mom.midd"      "mom.maid"      "mom.legal"
+# [13] "dad.first"     "dad.midd"      "dad.last"      "firstname.sdx"
+# [17] "lastname.sdx"  "dad.first.sdx" "dad.last.sdx"  "mom.first.sdx"
+# [21] "mom.maid.sdx"  "mom.legal.sdx" "subname"
+
+bdlink.pairs <- compare.linkage(bdlink,birth,blockfld=c(2),exclude=c(1,2),
+                                strcmp=c(23),strcmpfun=NameContains.func)
+bdlink.pairs.fs  <- fsWeights(bdlink.pairs)
+
+bdlink.train <- getMinimalTrain(bdlink.pairs.fs,nEx=3)
+bdlink.train <- editMatch(bdlink.train)
+bdlink.model <- trainSupv(bdlink.train,method="bagging")
+bdlink.result <- classifySupv(bdlink.model,newdata=bdlink.pairs.fs)
+
+xtable(table(cut(bdlink.result$Wdata,breaks=seq(-100,225,by=20)),
+      bdlink.result$prediction))
+\end{verbatim}
+\efs
+
+\begin{table}[ht]
+\centering
+\caption{\label{bdlinktab}Weights for the BDSS-birth record link, by predicted link status.}
+\begin{tabular}{rrr}
+  \hline
+weight  & N & L \\
+  \hline
+(-100,-80]  & 7029672 & 0    \\
+  (-80,-60] & 349956  & 0    \\
+  (-60,-40] & 40999   & 0    \\
+  (-40,-20] & 5617    & 175  \\
+  (-20,0]   & 1192    & 721  \\
+  (0,20]    & 736     & 638  \\
+  (20,40]   & 132     & 3775 \\
+  (40,60]   & 888     & 730  \\
+  (60,80]   & 201     & 1294 \\
+  (80,100]  & 268     & 2388 \\
+  (100,120] & 315     & 3622 \\
+  (120,140] & 130     & 3929 \\
+  (140,160] & 9       & 6050 \\
+  (160,180] & 0       & 2480 \\
+  (180,200] & 0       & 828  \\
+  (200,220] & 0       & 14   \\
+   \hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Manual review}
+
+The association between weights and predicted links is shown in \autorref{bdlinktab}.
+I will manually review predicted links with a weight of 20 or less, and predicted
+non-links with a weight of more than 0. I will manually code a random sample of 200 pairs each
+from these categories: predicted nonlinks with weights -40 or less, -20 to -40, and 0 to -20, and
+predicted links with weights 20 to 40, 40 to 60, 60 to 100, 100 to 140, and above 140. I will need to manually code 4213 + 1600 = 5813 pairs.
+
+I will label each record pair with a stratum identifier as follows:
+
+\begin{tabular}{lp(5in}r}
+  stratum & definition & sample size\\ \hline
+  1       & sampled with certainty (links with weight $\le$ 20; non-links with weight $>$ 0) & 4213\\
+  2       & non-links with weight $\le$ -40  & 200 \\
+  3       & non-links with -40 $<$ weight $\le $ -20 & 200 \\
+  4       & non-links with -20 $<$ weight $\le $ 0 & 200 \\
+  5       & links with 20 $<$ weight $\le$ 40 & 200 \\
+  6       & links with 40 $<$ weight $\le$ 60 & 200 \\
+  7       & links with 60 $<$ weight $\le$ 100 & 200 \\
+  8       & links with 100 $<$ weight $\le$ 140 & 200 \\
+  9       & links with weight $>$ 140 & 200 \\ \hline
+\end{tabular}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+stratum <- rep(NA,length(bdlink.result$prediction))
+for(i in 1:length(stratum)){
+   if ((bdlink.result$prediction[i] == 'L' & bdlink.result$Wdata[i] <= 20) |
+            (bdlink.result$prediction[i] == 'N' & bdlink.result$Wdata[i] > 0))   {stratum[i] <- 1}
+   else if(bdlink.result$Wdata[i] <= -40)  {stratum[i] <- 2}
+   else if (bdlink.result$prediction[i] == 'N'  & bdlink.result$Wdata[i] > -40   &
+             bdlink.result$Wdata[i] <= -20)  {stratum[i] <- 3}
+   else if (bdlink.result$prediction[i] == 'N'  & bdlink.result$Wdata[i] > -20   &
+             bdlink.result$Wdata[i] <= 0)  {stratum[i] <- 4}
+   else if (bdlink.result$prediction[i] == 'L'  & bdlink.result$Wdata[i] > 20     &
+             bdlink.result$Wdata[i] <= 40) {stratum[i] <- 5}
+   else if (bdlink.result$prediction[i] == 'L'  & bdlink.result$Wdata[i] > 40    &
+             bdlink.result$Wdata[i] <= 60) {stratum[i] <- 6}
+   else if (bdlink.result$prediction[i] == 'L'  & bdlink.result$Wdata[i] > 60    &
+             bdlink.result$Wdata[i] <= 100) {stratum[i] <- 7}
+   else if (bdlink.result$prediction[i] == 'L'  & bdlink.result$Wdata[i] > 100    &
+             bdlink.result$Wdata[i] <= 140) {stratum[i] <- 8}
+   else if (bdlink.result$Wdata[i] > 140)   {stratum[i] <- 9}
+   else stratum[i] <- 99
+}
+bdlink.result$stratum <- stratum
+rm(stratum)
+
+tab <- table(bdlink.result$stratum)
+strata.count <- data.frame(tab,c(tab[1],200,200,200,200,200,200,200,200))
+colnames(strata.count) <- c('stratum','N','n')
+rm(tab)
+
+strat.f <- data.frame(bdlink.result$pairs[,c(1,2)],stratum=bdlink.result$stratum,
+                      Wdata=bdlink.result$Wdata,prediction=bdlink.result$prediction)
+
+set.seed(5017082)
+sample1 <- strat.f[which(strat.f$stratum==1),]
+sample2 <- strat.f[which(strat.f$stratum==2),][sample(strata.count[2,2],strata.count[2,3]),]
+sample3 <- strat.f[which(strat.f$stratum==3),][sample(strata.count[3,2],strata.count[3,3]),]
+sample4 <- strat.f[which(strat.f$stratum==4),][sample(strata.count[4,2],strata.count[4,3]),]
+sample5 <- strat.f[which(strat.f$stratum==5),][sample(strata.count[5,2],strata.count[5,3]),]
+sample6 <- strat.f[which(strat.f$stratum==6),][sample(strata.count[6,2],strata.count[6,3]),]
+sample7 <- strat.f[which(strat.f$stratum==7),][sample(strata.count[7,2],strata.count[7,3]),]
+sample8 <- strat.f[which(strat.f$stratum==8),][sample(strata.count[8,2],strata.count[8,3]),]
+sample9 <- strat.f[which(strat.f$stratum==9),][sample(strata.count[9,2],strata.count[9,3]),]
+allsamples <- rbind(sample1,sample2,sample3,sample4,sample5,sample6,sample7,sample8,sample9)
+set.seed(seed=NULL)
+
+bdlink.sample            <- bdlink.result[rownames(allsamples)]
+bdlink.sample$Wdata      <- allsamples$Wdata
+bdlink.sample$prediction <- allsamples$prediction
+bdlink.sample$stratum    <- allsamples$stratum
+
+bdlink.sample <- editMatch(bdlink.sample)
+%@
+\end{verbatim}
+\efs
+
+Three tasks:
+\begin{enumerate}
+  \item replace predictions in bdlink.result with corrected predictions if
+the value of is\_match in bdlink.sample indicates the prediction was wrong.
+\item check whether any BDSS records linked to more than one birth record.
+\item measure the linking accuracy, according to the results in bdlink.sample.
+\end{enumerate}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+library(plyr)
+
+# give values of 0 and 1 for nonlink/link
+
+temp1 <- bdlink.result$pairs[,c(1,2)]
+temp1$prediction.model <- (as.numeric(bdlink.result$prediction)-1)/2
+temp1$Weight     <- bdlink.result$Wdata
+temp1$stratum    <- bdlink.result$stratum
+
+# add linkgroup and birth certificate identifiers
+temp2 <- cbind(temp1,bdlink.result$data1[temp1[,1],c(1,2)])
+allresults <- cbind(temp2,bdlink.result$data2[temp1[,2],c(1,2)])
+rm(temp1)
+rm(temp2)
+
+sampleresults <- getPairs(bdlink.sample,single.rows=T,sort=F)[,c(1,2,25,26)]
+sampleresults$prediction.review <- bdlink.sample$pairs$is_match
+
+allresults.corrected <- merge(allresults[,c(1:8)],sampleresults,by=c('id1','id2'),all=T)
+
+allresults.corrected$prediction <- rep(NA,length(allresults.corrected$prediction.model))
+allresults.corrected[is.na(allresults.corrected$prediction.review) &
+                     allresults.corrected$prediction.model==1,]$prediction <- 1
+allresults.corrected[is.na(allresults.corrected$prediction.review) &
+                     allresults.corrected$prediction.model==0,]$prediction <- 0
+allresults.corrected[!is.na(allresults.corrected$prediction.review) &
+                     allresults.corrected$prediction.review==1,]$prediction <- 1
+allresults.corrected[!is.na(allresults.corrected$prediction.review) &
+                     allresults.corrected$prediction.review==0,]$prediction <- 0
+allresults.corrected <- subset(allresults.corrected,select=c('id1','id2','linkgroup',
+                     'birthindex','Weight','prediction'))
+
+alllinks <- allresults.corrected[allresults.corrected$prediction==1,]
+%@
+\end{verbatim}
+\efs
+
+There are 26,576 records in {\tt alllinks}. When I check for the uniqueness of the
+linkgroup and birth certificate identifiers in the file I find this:
+
+\bfs
+\begin{verbatim}
+> length(table(alllinks$linkgroup))
+[1] 26295
+> length(table(alllinks$birthindex))
+[1] 26438
+
+> table(table(alllinks$linkgroup))
+
+    1     2     3     4
+26025   263     3     4
+
+> table(table(alllinks$birthindex))
+
+    1     2     3     4
+26309   124     1     4
+
+\end{verbatim}
+\efs
+
+This indicates that 263 linkgroups linked to 2 birth certificates each, 3 linked
+to 3 birth certificates each, and 4 linked to 4 birth certificates each. Also,
+124 birth certificates each linked to 2 different birth defects linkgroups, 1
+linked to 3 linkgroups, and 4 linked to 4 linkgroups each.
+
+The following code creates two record link objects ({\tt duplinkgroup.pairs} and
+{\tt dupbirthcert.pairs}) that contain, respectively, the link groups that linked to more than
+one birth certificate, and the births that linked to more than one linkgroup.
+
+I create the object {\tt duplinkgroup.pairs} by doing these steps:
+\begin{enumerate}
+\item get list of link groups that link to more than one birth cert
+\item extract those linkgroup-birthcert pairs from {\tt alllinks}
+\item extract the corresponding pairs from {\tt bdlink.result}
+\end{enumerate}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+# get list of duplicate link groups (there should be 270)
+duplinkgroups <- as.numeric(row.names(table(alllinks$linkgroup)[table(alllinks$linkgroup) > 1]))
+# get the linked pairs associated with those link groups (there should be 551)
+duplinkgroups2 <- alllinks[alllinks$linkgroup %in% duplinkgroups,]
+# extract the corresponding pairs from bdlink.result
+duplinkgroups3 <- merge(x=duplinkgroups2[,1:2],y=bdlink.result$pairs,
+                        by.x=c('id1','id2'),by.y=c('id1','id2'))
+# and create a new record link object with those pairs
+duplinkgroup.pairs <- bdlink.result
+duplinkgroup.pairs$pairs <- duplinkgroups3
+# and edit them to correct the linking
+
+duplinkgroup.pairs <- editMatch(duplinkgroup.pairs)
+
+temp <- merge(x=alllinks,y=duplinkgroup.pairs$pairs[,c(1,2,24)],
+                        by.x=c('id1','id2'),by.y=c('id1','id2'),all=T)
+alllinks.2 <- temp[is.na(temp$is_match) | temp$is_match == 1,]
+rm(temp)
+
+# do the same for dupbirthcerts
+dupbirthcerts <- as.numeric(row.names(table(alllinks$birthindex)[table(alllinks$birthindex) > 1]))
+dupbirthcerts2 <- alllinks[alllinks$birthindex %in% dupbirthcerts,]
+dupbirthcerts3 <- merge(x=dupbirthcerts2[,1:2],y=bdlink.result$pairs,
+                        by.x=c('id1','id2'),by.y=c('id1','id2'))
+dupbirthcerts3 <- dupbirthcerts3[order(dupbirthcerts3[,2]),]
+# and create a new record link object with those pairs
+dupbirthcert.pairs <- bdlink.result
+dupbirthcert.pairs$pairs <- dupbirthcerts3
+# and edit them to correct the linking
+
+dupbirthcert.pairs <- editMatch(dupbirthcert.pairs)
+
+%@
+\end{verbatim}
+\efs
+
+An analysis of the manually coded pairs in duplinkgroup.pairs shows that there
+are no link groups that I determined should be linked to two different birth certificates.
+This means that I do not need to use any information from that set to correct
+the deduplication dataset.
+
+The code below combines the predicted links with the manually corrected pairs
+to get a final list of linked birth defect and birth records.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+temp1 <- duplinkgroup.pairs$pairs[,c(1,2,24)]
+names(temp1) <- c('id1','id2','newmatch1')
+temp2 <- allresults.corrected
+temp3 <- merge(temp2,temp1,by=c('id1','id2'),all=T)
+
+temp4 <- dupbirthcert.pairs$pairs[,c(1,2,24)]
+names(temp4) <- c('id1','id2','newmatch2')
+temp5 <- merge(temp3,temp4,by=c('id1','id2'),all=T)
+
+# Fortunately, there are no pairs where newmatch1 and newmatch2 disagree.
+
+temp5$prediction.corrected <- temp5$prediction
+for(i in 1:length(temp5$prediction.corrected)){
+  if((!is.na(temp5$newmatch1[i]) & temp5$newmatch1[i]==0) |
+     (!is.na(temp5$newmatch2[i]) & temp5$newmatch2[i]==0)) temp5$prediction.corrected[i] <- 0
+  if((!is.na(temp5$newmatch1[i]) & temp5$newmatch1[i]==1) |
+     (!is.na(temp5$newmatch2[i]) & temp5$newmatch2[i]==1)) temp5$prediction.corrected[i] <- 1
+}
+
+# extract only the links, then merge with bdlink and births to get the linkgroup
+# and birth certificate identifiers
+linklist.A <- temp5[temp5$prediction.corrected==1,]
+linklist.B <- linklist.A[,c(3,4)]
+
+linklist.changed <- temp5[temp5$prediction==1 & temp5$prediction.corrected==0,]
+%@
+\end{verbatim}
+\efs
+
+The frame {\tt linklist.A} is a complete list of links between birth certificates and the
+original linkgroups, but some birth certificates linked to more than one BDSS link group.
+(The frame {\tt linklist.B} has only the linkgroup and birth certificate identifiers.)
+In some cases these links were mistakes, but in some cases, the links were
+correct, and the mistake is in the
+formation of the BDSS link groups. For these, I correct the BDSS linkgroups by assigning the
+lowest linkgroup number to all the matching link groups in the data frame {\tt alllinks.4}.
+I also prepare a list of those link groups so that the link group identifiers can be reassigned
+later in the BDSS deduplicated dataset.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+# get list of id2 values for birth certificates that are correctly associated with
+# more than one linkgroup
+correctlinks <- dupbirthcert.pairs$pairs[dupbirthcert.pairs$pairs$is_match==1,c(1,2)]
+temp <- table(correctlinks$id2)>1
+certlist <- as.numeric(names(temp[temp]))
+certlist <- data.frame(id2=certlist)
+
+# get the list of linkgroups associated with those birth certificates
+temp <- merge(x=certlist,y=correctlinks,by.x='id2',by.y='id2',all=F)
+temp <- temp[order(temp$id2,temp$id1),]
+
+# linklist has the birth certificate and linkgroup numbers
+linklist <- cbind(temp,bdlink[temp$id1,c(1:2)],birth[temp$id2,c(1:2)])
+rm(temp)
+
+# reassign linkgroup identifiers when there are unwarranted duplicates
+linklist$linkgroup.corrected <- linklist$linkgroup
+for(i in 2:dim(linklist)[1]){
+   if (linklist$birthindex[i]==linklist$birthindex[i-1])
+      linklist$linkgroup.corrected[i] <- linklist$linkgroup.corrected[i-1]
+}
+
+# combine with linklist.A, then relabel linkgroup with linkgroup.corrected
+alllinks.3 <- merge(x=linklist.A,y=linklist[,c(1,2,7)],
+                        by.x=c('id1','id2'),by.y=c('id1','id2'),all=T)
+alllinks.4 <- alllinks.3
+for(i in 1:dim(alllinks.4)[1]){
+   if (!is.na(alllinks.4$linkgroup.corrected[i])){
+      alllinks.4$linkgroup[i] <- alllinks.4$linkgroup.corrected[i]
+   }
+}
+
+temp6 <- alllinks.4[,3:4]
+linklist.C <- unique(temp6)
+%@
+\end{verbatim}
+\efs
+
+The frame {\tt linklist.C} is the final product of the linkage between BDSS records
+and birth certificates. It contains the birth certificate numbers and link group
+identifiers for the 26,217 linked pairs of records. Before sending this to the BDSS program, I
+need to fix the deduplicated data set to relabel link groups that I found need to be
+combined (see below).
+
+Show a list of things I found that I need to fix in the deduplicated file
+(i.e. the different linkgroups that linked to a single birth certificate
+are really one person and should be combined).
+
+\bfs
+\begin{verbatim}
+%<<>>=
+# list of linkgroups that need to be combined, with their new assigned
+# linkgroup numbers
+linklist[,c(3,5,7)]
+   linkgroup birthindex linkgroup.corrected
+2      20322  200110325               20322
+1      26817  200110325               20322
+3       3553  200211174                3553
+4      71386  200211174                3553
+6       2453  200214584                2453
+5      43261  200214584                2453
+7       1046  200221470                1046
+8       3741  200221470                1046
+10      4271  200259975                4271
+9       4958  200259975                4271
+11     16314  200319452               16314
+12     20104  200319452               16314
+14     16043  200358931               16043
+13     71215  200358931               16043
+15      8016  200363931                8016
+16     19964  200363931                8016
+18     17184  200373154               17184
+17     18066  200373154               17184
+20       222  200377398                 222
+19     40173  200377398                 222
+22      6962  200405962                6962
+21     13672  200405962                6962
+24     12699  200443781               12699
+23     33096  200443781               12699
+26     15575  200445629               15575
+25     15591  200445629               15575
+28     13355  200471310               13355
+27     27794  200471310               13355
+29      7107  200476273                7107
+30     13435  200476273                7107
+32     10103  200513981               10103
+31     25946  200513981               10103
+34       462  200547440                 462
+33      8586  200547440                 462
+35      5033  200607913                5033
+36     62711  200607913                5033
+38       935  200613399                 935
+37     32707  200613399                 935
+40      5533  200626010                5533
+39     56690  200626010                5533
+42      5126  200632386                5126
+41     37189  200632386                5126
+44     22045  200641713               22045
+43     59287  200641713               22045
+46      4583  200645710                4583
+45     28243  200645710                4583
+48     33345  200719555               33345
+47     41804  200719555               33345
+50     41389  200737504               41389
+49     43658  200737504               41389
+52     41798  200738384               41798
+53     43650  200738384               41798
+51     56824  200738384               41798
+55     29405  200750402               29405
+54     31262  200750402               29405
+56     31824  200761258               31824
+57     41758  200761258               31824
+59     30415  200779426               30415
+58     41696  200779426               30415
+60     24682  200821778               24682
+61     30852  200821778               24682
+63     24689  200831568               24689
+62     36753  200831568               24689
+65     34088  200844514               34088
+64     41828  200844514               34088
+67     31676  200846880               31676
+66     41726  200846880               31676
+69     36700  200866137               36700
+68     41840  200866137               36700
+71     35750  200869709               35750
+70     41818  200869709               35750
+72     42394  200918440               42394
+73     49126  200918440               42394
+75     34781  200918575               34781
+74     40952  200918575               34781
+77     33438  200919159               33438
+76     41817  200919159               33438
+79     43810  200921066               43810
+78     45118  200921066               43810
+81     33543  200946919               33543
+80     41784  200946919               33543
+83     33649  200959397               33649
+82     41801  200959397               33649
+85     39681  201007205               39681
+84     51785  201007205               39681
+87     47170  201045415               47170
+86     49990  201045415               47170
+88     50002  201126522               50002
+89     65556  201126522               50002
+91     51134  201133188               51134
+90     56207  201133188               51134
+92     52470  201156887               52470
+93     52519  201156887               52470
+95     51542  201174960               51542
+94     62640  201174960               51542
+96     55602  201254782               55602
+97     69800  201254782               55602
+98     59380  201272912               59380
+99     67559  201272912               59380
+
+%@
+\end{verbatim}
+\efs
+
+Write the data out to csv files:
+
+\bfs
+\begin{verbatim}
+%<<>>=
+write.csv(linklist.C,file="c:/PGPlead/BDSS/BDSS_birth_links_2014.csv",rownames=F)
+write.csv(linklist,file="c:/PGPlead/BDSS/BDSSdeduplicationcorrections.csv",rownames=F)
+%@
+\end{verbatim}
+\efs
+
+\begin{lstlisting}[language=sas,caption=correct the deduplicated set]
+libname bdlink 'c:\PGPlead\BDSS';
+proc import out=corrections
+   file = "c:\PGPlead\BDSS\BDSSdeduplicationcorrections.csv"
+   dbms = csv
+   replace
+   ;
+run;
+proc sort data=corrections;
+   by linkgroup;
+run;
+proc sort data=bdlink.dedupgroups2014 out=link1;
+   by linkgroup;
+run;
+data bdlink.dedupgroups2014_final(drop=linkgroup_corrected);
+   merge link1 corrections(in=incorrections keep=linkgroup linkgroup_corrected);
+   by linkgroup;
+   if incorrections then linkgroup = linkgroup_corrected;
+run;
+\end{lstlisting}
+
+
+\begin{lstlisting}[language=sas,caption=read linked file and combine with birth data]
+libname bdlink 'c:\PGPlead\BDSS';
+proc import out=bdlink.bd_birth_link_2014
+   file = "c:\PGPlead\BDSS\BDSS_birth_links_2014.csv"
+   dbms = csv
+   replace
+   ;
+run;
+\end{lstlisting}
+
+\section{Summary of results}
+
+The birth defects database had 72,410 records for children born during 2001--2013.
+
+After deduplication, we estimate that these 72,410 records belong to 33,659 separate children.
+The table shows the number of children per birth year.
+
+We were able to link 26,217 of the 33,659 children to birth records. The table below shows the
+number of children per birth year that we linked.
+
+Tabulate the number of persons per birth year with birth defects:
+
+\begin{lstlisting}[language=sas,caption=Tabulate linked data]
+libname bdlink 'c:\PGPlead\BDSS';
+proc sort data=bdlink.dedupgroups2014_final out=tlink nodupkey;
+   by linkgroup;
+run;
+data tlink2;
+   set tlink;
+   birthyear = year(birthdate);
+run;
+proc freq data=tlink2;
+   tables birthyear;
+run;
+\end{lstlisting}
+
+\bfs
+\begin{verbatim}
+                           The SAS System                                    24
+                                              09:42 Wednesday, December 3, 2014
+
+                         The FREQ Procedure
+
+                                         Cumulative    Cumulative
+   birthyear    Frequency     Percent     Frequency      Percent
+   --------------------------------------------------------------
+        2001        2289        6.80          2289         6.80
+        2002        3780       11.23          6069        18.03
+        2003        3461       10.28          9530        28.31
+        2004        3182        9.45         12712        37.77
+        2005        3192        9.48         15904        47.25
+        2006        3144        9.34         19048        56.59
+        2007        2486        7.39         21534        63.98
+        2008        2280        6.77         23814        70.75
+        2009        2082        6.19         25896        76.94
+        2010        1998        5.94         27894        82.87
+        2011        2201        6.54         30095        89.41
+        2012        1986        5.90         32081        95.31
+        2013        1578        4.69         33659       100.00
+\end{verbatim}
+\efs
+
+The table below shows the year of first admission for each person reported with a birth
+defect, tabulated by the year of birth. Some of the decline in the number of birth defects
+reported per birth year is because of shortened follow-up time, but most of it is because either
+birth defects are becoming less frequent or they are less well-reported.
+
+\bfs
+\begin{verbatim}
+data temp2;
+   set bdlink.dedupgroups2014_final;
+   admityear = year(admitdate);
+   birthyear = year(birthdate);
+run;
+proc sort data=temp2;
+   by linkgroup admitdate;
+run;
+proc sort data=temp2 out=temp3 nodupkey;
+   by linkgroup ;
+run;
+proc freq data=temp3;
+   tables admityear*birthyear/norow nocol nopercent;
+run;
+/*
+results:
+             The SAS System                        09:42 Wednesday, December 3, 2014  30
+
+                                                          The FREQ Procedure
+
+                                                    Table of admityear by birthyear
+
+admityear     birthyear
+
+Frequency|   2001|  2002|  2003|  2004|  2005|  2006|  2007|  2008|  2009|  2010|  2011|  2012|  2013| Total
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2001 |    66 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    66
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2002 |   841 | 2049 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |  2890
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2003 |   418 |  695 | 1846 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |  2959
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2004 |   156 |  197 |  554 | 1641 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |  2548
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2005 |   116 |  130 |  229 |  551 | 1587 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |  2613
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2006 |   100 |  120 |  178 |  293 |  695 | 1755 |    0 |    0 |    0 |    0 |    0 |    0 |    0 |  3141
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2007 |    90 |   93 |  101 |  128 |  225 |  508 | 1141 |    0 |    0 |    0 |    0 |    0 |    0 |  2286
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2008 |    54 |   62 |   85 |   91 |  111 |  197 |  470 |  973 |    0 |    0 |    0 |    0 |    0 |  2043
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2009 |    72 |   63 |   64 |   78 |   99 |  146 |  225 |  524 |  947 |    0 |    0 |    0 |    0 |  2218
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2010 |    74 |   72 |   88 |   86 |  107 |  135 |  175 |  252 |  507 |  959 |    0 |    0 |    0 |  2455
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2011 |    93 |   89 |  107 |   98 |  113 |  140 |  156 |  162 |  231 |  536 | 1312 |    0 |    0 |  3037
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2012 |    87 |   97 |   88 |   84 |  116 |  121 |  156 |  175 |  165 |  245 |  574 | 1277 |    0 |  3185
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2013 |    89 |   74 |   82 |   85 |   89 |   91 |   97 |  136 |  137 |  159 |  213 |  575 | 1139 |  2966
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+    2014 |    33 |   39 |   39 |   47 |   50 |   51 |   66 |   58 |   95 |   99 |  102 |  134 |  439 |  1252
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+   Total |  2289 | 3780 | 3461 | 3182 | 3192 | 3144 | 2486 | 2280 | 2082 | 1998 | 2201 | 1986 | 1578 | 33659
+---------+-------+------+------+------+------+------+------+------+------+------+------+------+------+
+*/
+\end{verbatim}
+\efs
+
+\section{Final data product}
+
+I will create a file that has these elements on each record: \\
+created by me: linkgroup,\\
+from BDSS: client\_id, visit\_id, birthdate\\
+from birth certificate file: all data elements.
+
+Steps:
+\begin{enumerate}
+\item combine {\tt bdlink.bd\_birth\_link\_2014} with {\tt bdlink.dedupgroups2014\_final}
+  to create one file with all BDSS records, with the birth link, if it exists.
+\item create three files for BDSS, as described below
+\end{enumerate}
+
+\end{detail}
+
+I created three files containing the BDSS deduplication and BDSS-birth linkage information.
+The files are named with the suffix `2014' to indicate that they were created in 2014. They contain
+BDSS data for children born in 2001--2013, and are linked to the 2001--2012 birth files.
+
+\begin{enumerate}
+\item File 1: (name {\tt fileone2014.csv}) A file with all BDSS records for patients born in 2001--2013, indexed by visitid,
+and including these elements: visitid, linkgroup. The `visitid' field uniquely identifies the BDSS record,
+and the `linkgroup' field uniquely identifies a child.
+\item File 2: (name {\tt filetwo2014.csv}) A file with one record per linkgroup, indexed by linkgroup, and including these
+elements: linkgroup, birth link indicator, and birthindex if linked to birth file.
+\item File 3: (name {\tt filethree2014.csv}) A file with one record for each linkgroup that linked to birth file, indexed by
+birthindex, and containing these elements: birthindex, linkgroup, and all birth
+certificate elements from the birth certificate names file.
+\end{enumerate}
+
+
+\begin{detail}
+\begin{lstlisting}[language=sas,caption=Produce final datasets]
+libname bdlink 'c:\PGPlead\BDSS';
+/*
+merge the linked file with the deduplication file to add birth certificate number
+*/
+proc sort data=bdlink.dedupgroups2014_final out=dedup;
+   by linkgroup;
+run;
+proc sort data=bdlink.bd_birth_link_2014 out=bdlink;
+   by linkgroup;
+run;
+data linkgroups;
+   merge dedup bdlink;
+   by linkgroup;
+run;
+/*
+Create File 1: file with all BD records for patients born in 2001--2013, indexed by visit\_id,
+and including these elements: visit\_id, linkgroup
+*/
+data bdlink.FileOne;
+   set linkgroups;
+   keep visitid linkgroup;
+run;
+proc sort data=bdlink.FileOne;
+   by visitid;
+run;
+/*
+Create File 2: file with one record per linkgroup, indexed by linkgroup, and including these
+elements: linkgroup, birth link indicator, birthindex if linked to birth file
+*/
+data temp(keep=linkgroup birthindex birthlinkflag);
+   set linkgroups;
+   if birthindex = . then birthlinkflag = 0;
+   else birthlinkflag = 1;
+run;
+proc sort data=temp out=bdlink.FileTwo nodupkey;
+   by linkgroup;
+run;
+/*
+Create File 3: file with one record for each linkgroup that linked to birth file, indexed by
+birthindex, and containing these elements: birthindex, linkgroup, and all birth
+certificate elements.
+*/
+data temp2;
+   set bdlink.FileTwo(where=(birthindex ne .) drop=birthlinkflag);
+run;
+proc sort data=temp2;
+   by birthindex;
+run;
+data temp3(drop=tempindex);
+   set bdlink.birth2001_2012(rename=(birthindex=tempindex));
+   birthindex = tempindex+0;
+run;
+proc sort data=temp3;
+   by birthindex;
+run;
+data bdlink.FileThree;
+   merge temp2(in=inbdss) temp3;
+   by birthindex;
+   if inbdss;
+   format birthdate dad_dob mom_dob mmddyy10.;
+run;
+/*
+Produce csv file from each file
+*/
+proc sort data=bdlink.fileone;
+   by visit_id;
+run;
+proc export data=bdlink.fileone
+   outfile = 'c:\PGPlead\bdss\fileone2014.csv'
+   dbms=csv
+   replace;
+run;
+proc sort data=filetwo;
+   by linkgroup;
+run;
+proc export data=bdlink.filetwo
+   outfile = 'c:\PGPlead\bdss\filetwo2014.csv'
+   dbms=csv
+   replace;
+run;
+proc sort data=bdlink.filethree;
+   by birthindex;
+run;
+proc export data=bdlink.filethree
+   outfile = 'c:\PGPlead\bdss\filethree2014.csv'
+   dbms=csv
+   replace;
+run;
+\end{lstlisting}
+
+\subsection{Descriptive tables}
+
+\begin{lstlisting}[language=sas,caption=Read the link information and produce final datasets]
+options ls=80;
+data temp;
+   set linkgroups;
+   birthyear = year(birthdate);
+run;
+proc freq data=temp;
+   tables birthyear;
+run;
+proc sort data=temp out=temp2 nodupkey;
+   by linkgroup;
+run;
+proc freq data=temp2;
+   tables birthyear;
+run;
+proc freq data=temp2;
+   where birthindex ne .;
+   tables birthyear;
+run;
+\end{lstlisting}
+
+\end{detail}
+
+\begin{tabular}{lrrrr}
+Birth    & number of    & number of  & number linked & percent  \\
+year     & BDSS records & children   & to births     & linked   \\ \hline
+ 2001    &   5,308    &  2,289  &  1,749   &  76.4  \\
+ 2002    &   8,241    &  3,780  &  2,854   &  75.5  \\
+ 2003    &   7,368    &  3,461  &  2,763   &  79.8  \\
+ 2004    &   6,685    &  3,182  &  2,544   &  79.9  \\
+ 2005    &   7,072    &  3,192  &  2,600   &  81.5  \\
+ 2006    &   7,436    &  3,144  &  2,631   &  83.7  \\
+ 2007    &   5,467    &  2,486  &  2,015   &  81.1  \\
+ 2008    &   5,309    &  2,280  &  1,859   &  81.5  \\
+ 2009    &   4,597    &  2,082  &  1,763   &  84.7  \\
+ 2010    &   4,157    &  1,998  &  1,712   &  85.7  \\
+ 2011    &   4,168    &  2,201  &  1,970   &  89.5  \\
+ 2012    &   3,762    &  1,986  &  1,757   &  88.5  \\
+ 2013    &   2,840    &  1,578  &          &        \\
+ \hline
+total    & 72,410     & 33,659  & 26,217   &    \\
+\hline
+\end{tabular}
+
+\begin{detail}
+
+\clearpage
+\bibliographystyle{aje}
+\bibliography{c:/user/references/General}
+
+\clearpage
+\section{Appendices}
+
+Here are the SAS programs that were used to extract the data from the SQL server database
+and prepare it for deduplication and linkage.
+
+\begin{small}
+
+\input{c:/user/projects/BDSS/BDSSlink.sas}
+
+\end{small}
+\end{detail}
+
+\end{document}

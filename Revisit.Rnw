@@ -1,0 +1,1966 @@
+\documentclass[10pt]{article}
+\usepackage{xspace,colortbl,comment}
+\usepackage{overcite,setspace,rotating,newcent,url,hyperref}
+\usepackage[color=green!10,textsize=footnotesize]{todonotes}
+\usepackage{listings}
+\lstloadlanguages{SAS}
+\lstset{basicstyle=\footnotesize,keywordstyle=\color{blue},showstringspaces=false,commentstyle=\color{red}}
+
+\setlength{\parindent}{0em}
+\setlength{\parskip}{2ex}
+\setlength{\topmargin}{-0.5in}
+\setlength{\textheight}{9.0in}
+\setlength{\textwidth}{6.0in}
+\setlength{\oddsidemargin}{0.25in}
+
+\raggedright
+\makeatletter \renewcommand\@biblabel[1]{#1.} \makeatother
+
+\setcounter{secnumdepth}{0}
+
+\setlength{\marginparwidth}{1in}
+
+\newcommand\bvm{\begin{verbatim}}
+\newcommand\evm{\end{verbatim}}
+\newcommand\bfs{\begin{footnotesize}}
+\newcommand\efs{\end{footnotesize}}
+\newcommand\rr{\raggedright}
+
+\specialcomment{detail}{\rule{1ex}{1ex}\hspace{1ex}\rule{1ex}{1ex}\begin{small}
+   {\it begin analysis details}\\}
+   {\rule{1ex}{1ex}{\it \ end analysis details}\end{small}}
+
+\begin{document}
+%\excludecomment{detail}
+\pagestyle{myheadings}
+
+\section{Create CHARS revisit file}
+
+Eric Ossiander\\
+\today
+
+This describes how I created a CHARS revisit file for 2009--2013 CHARS
+records, including the observation records.
+
+I used the following fields in the linking process:
+
+\begin{tabular}{l}
+birth date           \\
+name                 \\
+last 4 digits of SSN \\
+sex                  \\
+zipcode of residence \\
+county of residence  \\
+Hispanic ethnicity   \\
+race                 \\
+state of residence   \\
+\end{tabular}
+
+I used the
+RecordLinkage package in R for most of the linking. In all of the record
+linking that I did in R, I used birth date as a blocking field (i.e. I
+required that the birth date on one hospitalization record match the
+birth date on another in order to evaluate them as a link). First, I computed
+a probabilistic linkage weight for each record pair. Second, I used a
+machine learning algorithm to predict which record pairs were links.
+(This required me to manually code a training set, to create a
+statistical model for predicting links.) Then I manually reviewed all
+of the record pairs which were
+predicted not to be a link by the machine learning algorithm, but
+which had a high probabilistic weight, and all
+record pairs which were predicted to be a link, but had a low weight. I
+also used a SAS program to compute a probabilistic linkage weight for
+all record pairs (i.e. not blocking on birth date), and manually
+reviewed all of the record pairs that had a high probabilistic weight
+ in which birth dates did not match. I combined the
+three linked sets (the machine-linked pairs, the manual review of the
+machine linking, and the manual coding of the non-birth date matching
+pairs). Then I checked for hospitalization records that were in more
+than one link set, and manually adjudicated those links.
+
+
+\subsection{Process}
+
+\subsubsection{Data items}
+
+The items that help identify people in the CHARS file, and therefore
+can be used for linking are:
+
+\begin{tabular}{l}
+name \\
+dob \\
+social security number (last 4 digits) \\
+age \\
+sex \\
+race, ethnicity \\
+hospital code \\
+place of residence (zipcode and county)
+\end{tabular}
+
+All of these items are in the confidential files (names {\tt
+  chr\_r2012.sas7bdat}, etc).
+
+It looks like names are present on a few records in 2008, and on
+almost all records in 2009 and following years. In 2007 and earlier
+(and in the 2008 records that don't have names), first two letters of
+names are on the files. Birthdates are apparently on all files. SSN is
+two-thirds missing in 2008, better in 2009, and about 20\% missing in
+2012. It is almost entirely missing in 2007. Race is reported on about
+40\% of 2008 records, very few before that year, and almost all
+records after that year.
+
+Therefore, I can link only the 2009--2013 files.
+
+\subsection{Create CHARS file}
+
+
+\begin{lstlisting}[language=sas,caption=Create CHARS file for linking]
+libname chars 'c:\data\chars';
+data clink(keep=seq_no_enc staytype adm_date age country countyres dis_date dob firstname
+                ssnL4 hispanic hospital lastname miname race_ami race_asi race_blk
+                race_haw race_wht sex stateres status zipcode zipplus4
+                lastname_sdx firstname_sdx suffix);
+   length firstname lastname $ 20 suffix $ 4 lastname_sdx firstname_sdx $ 4;
+   set chars.chr_r2009(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chr_r2010(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chr_r2011(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chr_r2012(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chr_r2013(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chro_r2009(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chro_r2010(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chro_r2011(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chro_r2012(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp))
+       chars.chro_r2013(rename=(SSN=ssnL4 firstname=firsttemp lastname=lasttemp));
+   firsttemp = compress(firsttemp," '`-_,.&");
+   if (substr(firsttemp,1,4) = 'BABY') or (firsttemp in ('A','B','BOY','GIRL','BA','BB',
+         'BG','BBABY','G','GA','GB','NB','BA-','BB-','BG-')) then firsttemp = '';
+   firstname = firsttemp;
+   if race_ami in ('U','R') then race_ami = '';
+   if race_asi in ('U','R') then race_asi = '';
+   if race_blk in ('U','R') then race_blk = '';
+   if race_haw in ('U','R') then race_haw = '';
+   if race_wht in ('U','R') then race_wht = '';
+   if hispanic in ('U','R') then hispanic = '';
+/*
+remove the suffixes II, III, IV, V, VI, VII, VIII, ESQ, JR, and SR
+from lastnames and place them in a separate suffix field.
+Used with UB04 data.
+*/
+   if _N_ = 1 then do;
+   	retain __re __reIII;
+   	pattern = "/( II| III| IV| V| VI| VII| VIII| ESQ|.JR|.SR)$/i";
+   	__re = prxparse(pattern);
+   	__reIII = prxparse('/III$/');
+   end;
+   lasttemp = translate(lasttemp,' ','.,');
+   call prxsubstr(__re, TRIM(lasttemp), position, length);
+   if position ^= 0 then do;
+   	suffix    = substr(lasttemp, position + 1, length - 1);
+   	lasttemp2 = substr(lasttemp, 1, position - 1);
+   end;
+   else lasttemp2 = lasttemp;
+
+   lastname  = compress(lasttemp2," '`-_,.&");
+   lastname_sdx  = soundex(lastname);
+   firstname_sdx = soundex(firstname);
+run;
+\end{lstlisting}
+
+\subsection{Compute an {\it ad hoc} linking weight}
+
+I will use the RecordLinkage package in R for most of the
+linking. The use of that package will require blocking on birthdate,
+but there are sure to be some true matches in which birthdates don't
+match. Therefore, I will write a SAS program to compute an {\it ad hoc} probabilistic weight
+for each pair of records in the 2009-2012 CHARS files, and manually review all the record pairs
+that have a high weight on which the birthdates don't match.
+
+Fields I will use, and the points I will give for a matching value are:
+
+\begin{tabular}{lll}
+item        &  match                    &  different \\ \hline
+birthdate   &  20                       &    -20     \\
+firstname   &  10 (2 for soundex match) &    -10     \\
+lastname    &  15 (4 for soundex)       &    -15     \\
+middleinit  &   2                       &    -3      \\
+sex         &   2                       &    -20     \\
+zipcode     &   3                       &    -2      \\
+county      &   3                       &    -5      \\
+ssnL4       &  15                       &    -10     \\
+race\_ami   &   5                       &    -5      \\
+race\_asi   &   5                       &    -5      \\
+race\_blk   &   5                       &    -5      \\
+race\_haw   &   5                       &    -5      \\
+race\_wht   &   5                       &    -5      \\
+hispanic    &   5                       &    -5      \\
+statecode   &   1                       &    -5      \\
+hospital    &   5                       &    -5      \\ \hline
+\end{tabular}
+
+\begin{lstlisting}[language=sas,caption=compute test link scores]
+/*
+Sort the file first so that I can be sure that when it is divided
+into parts at different times and on different computers, the parts
+are divided correctly.
+
+For each record, I will evaluate its similarity with each of the other records
+by computing a score using the points described above. In the output dataset,
+I will keep records that have a score of at least 1.
+Maximum score is ?.
+*/
+proc sort data=clink;
+    by seq_no_enc staytype;
+run;
+data clinkcopy;
+   set clink;
+   rename
+     adm_date      = c_adm_date
+     age           = c_age
+     country       = c_country
+     countyres     = c_countyres
+     dis_date      = c_dis_date
+     dob           = c_dob
+     firstname     = c_firstname
+     firstname_sdx = c_firstname_sdx
+     hispanic      = c_hispanic
+     hospital      = c_hospital
+     lastname      = c_lastname
+     lastname_sdx  = c_lastname_sdx
+     miname        = c_miname
+     race_ami      = c_race_ami
+     race_asi      = c_race_asi
+     race_blk      = c_race_blk
+     race_haw      = c_race_haw
+     race_wht      = c_race_wht
+     seq_no_enc    = c_seq_no_enc
+     sex           = c_sex
+     ssnl4         = c_ssnl4
+     stateres      = c_stateres
+     status        = c_status
+     staytype      = c_staytype
+     suffix        = c_suffix
+     zipcode       = c_zipcode
+     zipplus4      = c_zipplus4
+     ;
+run;
+
+%macro linker(part,first,last);
+/*
+require match on fname or lname first, and discard birthdate matches.
+*/
+data chars.adhocweights_part&part.;
+   set clink(firstobs=&first obs=&last);
+   if _n_/1000 = round(_n_/1000) then put _n_=;
+   do i = 1 to 3713485;
+      set clinkcopy point=i;
+      if (firstname ne c_firstname and lastname ne c_lastname) or
+          dob = c_dob then score = 0;
+      else score =
+         (countyres     = c_countyres     and countyres   ne '')*3  +
+         (countyres     ne c_countyres    )*(-5) +
+         (month(dob)    = month(c_dob)    and dob          ne .)*5   +
+         (month(dob)    ne month(c_dob)   )*(-4)  +
+         (day(dob)      = day(c_dob)      and dob          ne .)*5   +
+         (day(dob)      ne day(c_dob)     )*(-4)   +
+         (year(dob)     = year(c_dob)     and dob          ne .)*3   +
+         (year(dob)     ne year(c_dob)    )*(-4)   +
+         (firstname     = c_firstname     and firstname    ne '')*10 +
+         (firstname     ne c_firstname    )*(-10) +
+         (hispanic      = c_hispanic      and hispanic     ne '')*2  +
+         (hispanic      ne c_hispanic     )*(-2) +
+         (lastname      = c_lastname      and lastname     ne '')*15  +
+         (lastname      ne c_lastname     )*(-15) +
+         (miname        = c_miname        and miname       ne '')*2  +
+         (miname        ne c_miname       )*(-3) +
+         (race_ami      = c_race_ami      and race_ami     ne '')*1  +
+         (race_ami      ne c_race_ami     )*(-2) +
+         (race_asi      = c_race_asi      and race_asi     ne '')*1  +
+         (race_asi      ne c_race_asi     )*(-2) +
+         (race_blk      = c_race_blk      and race_blk     ne '')*1  +
+         (race_blk      ne c_race_blk     )*(-2) +
+         (race_haw      = c_race_haw      and race_haw     ne '')*1  +
+         (race_haw      ne c_race_haw     )*(-2) +
+         (race_wht      = c_race_wht      and race_wht     ne '')*1  +
+         (race_wht      ne c_race_wht     )*(-2) +
+         (sex           = c_sex           and sex          ne '')*2  +
+         (sex           ne c_sex          )*(-20) +
+         (zipcode       = c_zipcode       and zipcode      not in ('','99999'))*3  +
+         (zipcode       ne c_zipcode      )*(-2) +
+         (zipcode = c_zipcode and zipcode not in ('','99999') and zipplus4 = c_zipplus4 and
+                    zipplus4 not in ('','9999'))*15  +
+         (firstname_sdx = c_firstname_sdx and firstname_sdx ne '')*4  +
+         (firstname_sdx ne c_firstname_sdx)*(-8) +
+         (lastname_sdx  = c_lastname_sdx  and lastname_sdx ne '')*6 +
+         (lastname_sdx  ne c_lastname_sdx )*(-10) +
+         (ssnl4         = c_ssnl4         and ssnl4 not in ('','9999'))*15 +
+         (ssnl4         ne c_ssnl4        )*(-10) +
+         (stateres      = c_stateres      and stateres     ne '')*1 +
+         (stateres      ne c_stateres     )*(-5) +
+         (hospital      = c_hospital      and hospital     ne '')*7 +
+         (hospital      ne c_hospital     )*(-5)
+         ;
+      if score ge 1 then output;
+      *output;
+      end;
+run;
+%mend;
+
+%linker(1,1,560000);
+%linker(2,560001,1120000);
+%linker(3,1120001,1680000);
+%linker(4,1680001,2240000);
+
+home:
+%linker(5,2240001,2990000);
+%linker(6,2990001,3713485);
+
+
+data chars.revisit_adhocweights;
+    set chars.adhocweights_part1 chars.adhocweights_part2 chars.adhocweights_part3
+        chars.adhocweights_part4 chars.adhocweights_part5 chars.adhocweights_part6;
+run;
+\end{lstlisting}
+
+I realized after the fact that the {\it ad hoc} weights file has every
+pairs duplicated, once with a particular record as the first in a
+pair, and again, with the two records switched. Below I remove these
+duplicates. First, I create a unique record identifying number (named
+{\tt recordID}) by
+combining sequence number ({\tt seq\_no\_enc}) and stay type, then I
+combine the two recordIDs on each record in the file, with the smaller
+number placed first in the combination, then removing the duplicates
+on the combined field.
+
+\begin{lstlisting}[language=sas,caption=remove duplicate adhoc pairs]
+data temp1;
+   length twoID $ 22 recordID c_recordID $ 11;
+   set chars.revisit_adhocweights;
+   recordID = seq_no_enc||staytype;
+   c_recordID = c_seq_no_enc||c_staytype;
+   if recordID < c_recordID then twoID = recordID||c_recordID;
+   else                          twoID = c_recordID||recordID;
+run;
+proc sort data=temp1 out=chars.revisit_adhocweights2 nodupkey;
+   by twoID;
+run;
+\end{lstlisting}
+
+The file with adhoc weights has a large number of pairs (almost 14
+million after removing duplicates). Here is a frequency count of the scores:
+
+\begin{lstlisting}[language=sas,caption=frequency table of adhoc weights]
+proc freq data=chars.revisit_adhocweights2;
+    tables score;
+run;
+/*
+results
+                                 The SAS System                               14
+                                                07:41 Tuesday, December 16, 2014
+
+                               The FREQ Procedure
+
+                                             Cumulative    Cumulative
+           score    Frequency     Percent     Frequency      Percent
+           ----------------------------------------------------------
+               1     2891690       20.91       2891690        20.91
+               2     1226774        8.87       4118464        29.79
+               3      701997        5.08       4820461        34.86
+               4     1330173        9.62       6150634        44.48
+               5     1291336        9.34       7441970        53.82
+               6      608660        4.40       8050630        58.23
+               7      219851        1.59       8270481        59.82
+               8     2800281       20.25      11070762        80.07
+               9      216824        1.57      11287586        81.64
+              10      375713        2.72      11663299        84.35
+              11      244807        1.77      11908106        86.12
+              12      113033        0.82      12021139        86.94
+              13      443249        3.21      12464388        90.15
+              14       78513        0.57      12542901        90.72
+              15      133494        0.97      12676395        91.68
+              16      296140        2.14      12972535        93.82
+              17      346745        2.51      13319280        96.33
+              18       52735        0.38      13372015        96.71
+              19       29590        0.21      13401605        96.93
+              20       56590        0.41      13458195        97.34
+              21       53481        0.39      13511676        97.72
+              22       52723        0.38      13564399        98.10
+              23       20888        0.15      13585287        98.25
+              24       28513        0.21      13613800        98.46
+              25       41344        0.30      13655144        98.76
+              26       25075        0.18      13680219        98.94
+              27        8069        0.06      13688288        99.00
+              28       54104        0.39      13742392        99.39
+              29       10623        0.08      13753015        99.47
+              30        6622        0.05      13759637        99.52
+              31        6899        0.05      13766536        99.57
+              32        2542        0.02      13769078        99.58
+              33       16795        0.12      13785873        99.71
+              34        2910        0.02      13788783        99.73
+              35        3762        0.03      13792545        99.75
+              36        2084        0.02      13794629        99.77
+              37        7334        0.05      13801963        99.82
+              38        4297        0.03      13806260        99.85
+              39         564        0.00      13806824        99.86
+              40        1128        0.01      13807952        99.87
+              41         691        0.00      13808643        99.87
+              42        1911        0.01      13810554        99.88
+              43         683        0.00      13811237        99.89
+              44         403        0.00      13811640        99.89
+              45         632        0.00      13812272        99.90
+              46         515        0.00      13812787        99.90
+              47         723        0.01      13813510        99.91
+              48         465        0.00      13813975        99.91
+              49         332        0.00      13814307        99.91
+              50         401        0.00      13814708        99.91
+              51         295        0.00      13815003        99.92
+              52         340        0.00      13815343        99.92
+              53         246        0.00      13815589        99.92
+              54         484        0.00      13816073        99.92
+              55         200        0.00      13816273        99.93
+              56         315        0.00      13816588        99.93
+              57         316        0.00      13816904        99.93
+              58         479        0.00      13817383        99.93
+              59         192        0.00      13817575        99.93
+              60         361        0.00      13817936        99.94
+              61         181        0.00      13818117        99.94
+              62         848        0.01      13818965        99.94
+              63         517        0.00      13819482        99.95
+              64         552        0.00      13820034        99.95
+              65         348        0.00      13820382        99.96
+              66         119        0.00      13820501        99.96
+              67         889        0.01      13821390        99.96
+              68          75        0.00      13821465        99.96
+              69         627        0.00      13822092        99.97
+              70         214        0.00      13822306        99.97
+              71          39        0.00      13822345        99.97
+              72         349        0.00      13822694        99.97
+              73          35        0.00      13822729        99.97
+              74         614        0.00      13823343        99.98
+              75         220        0.00      13823563        99.98
+              76         316        0.00      13823879        99.98
+              77         503        0.00      13824382        99.98
+              78           7        0.00      13824389        99.98
+              79        1164        0.01      13825553        99.99
+              80           3        0.00      13825556        99.99
+              81         609        0.00      13826165       100.00
+              82          42        0.00      13826207       100.00
+              83           2        0.00      13826209       100.00
+              84          24        0.00      13826233       100.00
+              85           3        0.00      13826236       100.00
+              86          14        0.00      13826250       100.00
+              87          11        0.00      13826261       100.00
+              89          13        0.00      13826274       100.00
+              90           6        0.00      13826280       100.00
+              91           3        0.00      13826283       100.00
+              92          55        0.00      13826338       100.00
+              94         105        0.00      13826443       100.00
+              96         157        0.00      13826600       100.00
+*/
+\end{lstlisting}
+
+\subsubsection{Machine linking for non-matching birthdates}
+
+With almost 14 million pairs in the {\tt ad hoc} weights file for
+non-matching birth dates, it looks like it would be hard to manually
+review all of the potentially matching pairs. I will see if I can use
+the RecordLinkage package on these pairs. I can't do it in the usual way
+because there are no fields that are good for blocking.
+I will create the {\tt data} data frame and the {\tt pairs}
+data frame and combine them to form a record linkage object. Then I
+will try to extract a training set, and build and run a prediction
+model on the object.
+
+\begin{enumerate}
+\item in SAS, process the {\it ad hoc} weights file into the form for the
+  data and pairs objects
+\item read those into R
+\item create RecLinkData object
+\item get training set
+\item code the training set
+\item build and implement a prediction model
+\item check the results
+\end{enumerate}
+
+To build the data and pairs frames I need to
+
+\begin{enumerate}
+\item
+\end{enumerate}
+
+\begin{lstlisting}[language=sas,caption=write the ad hoc weighted data to csv file]
+proc export data=chars.revisit_adhocweights2
+   file = "c:\data\chars\revisitadhoc.csv"
+   dbms = csv
+   replace
+   ;
+run;
+\end{lstlisting}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+adhoc <- read.csv("../../../data/chars/revisitadhoc.csv",stringsAsFactors=F,na.strings='')
+
+# fix some missing values in SSN
+# the sequence "5159" also occurs with high frequency, but I can't think why
+# it would be a bogus number, so I don't remove it.
+#
+adhoc$ssnL4[(adhoc$ssnL4 %in% c('0001','1111','6789','9999'))] <- NA
+adhoc$c_ssnl4[(adhoc$c_ssnl4 %in% c('0001','1111','6789','9999'))] <- NA
+
+adhoc.p <- data.frame(recordID1=adhoc$recordID,recordID2=adhoc$c_recordID)
+
+adhoc.p$firstname[(adhoc$firstname == adhoc$c_firstname)] <- 1
+adhoc.p$firstname[!(adhoc$firstname == adhoc$c_firstname)] <- 0
+adhoc.p$lastname[(adhoc$lastname == adhoc$c_lastname)] <- 1
+adhoc.p$lastname[!(adhoc$lastname == adhoc$c_lastname)] <- 0
+adhoc.p$miname[(adhoc$MINAME == adhoc$c_miname)] <- 1
+adhoc.p$miname[!(adhoc$MINAME == adhoc$c_miname)] <- 0
+adhoc.p$suffix[(adhoc$suffix == adhoc$c_suffix)] <- 1
+adhoc.p$suffix[!(adhoc$suffix == adhoc$c_suffix)] <- 0
+adhoc.p$month[(substr(adhoc$DOB,1,2) == substr(adhoc$c_dob,1,2))] <- 1
+adhoc.p$month[!(substr(adhoc$DOB,1,2) == substr(adhoc$c_dob,1,2))] <- 0
+adhoc.p$day[(substr(adhoc$DOB,4,5) == substr(adhoc$c_dob,4,5))] <- 1
+adhoc.p$day[!(substr(adhoc$DOB,4,5) == substr(adhoc$c_dob,4,5))] <- 0
+adhoc.p$year[(substr(adhoc$DOB,7,10) == substr(adhoc$c_dob,7,10))] <- 1
+adhoc.p$year[!(substr(adhoc$DOB,7,10) == substr(adhoc$c_dob,7,10))] <- 0
+adhoc.p$ssnL4[(adhoc$ssnL4 == adhoc$c_ssnl4)] <- 1
+adhoc.p$ssnL4[!(adhoc$ssnL4 == adhoc$c_ssnl4)] <- 0
+adhoc.p$sex[(adhoc$SEX == adhoc$c_sex)] <- 1
+adhoc.p$sex[!(adhoc$SEX == adhoc$c_sex)] <- 0
+adhoc.p$zipcode[(adhoc$ZIPCODE == adhoc$c_zipcode)] <- 1
+adhoc.p$zipcode[!(adhoc$ZIPCODE == adhoc$c_zipcode)] <- 0
+adhoc.p$zipplus4[(adhoc$ZIPPLUS4 == adhoc$c_zipplus4)] <- 1
+adhoc.p$zipplus4[!(adhoc$ZIPPLUS4 == adhoc$c_zipplus4)] <- 0
+adhoc.p$countyres[(adhoc$COUNTYRES == adhoc$c_countyres)] <- 1
+adhoc.p$countyres[!(adhoc$COUNTYRES == adhoc$c_countyres)] <- 0
+adhoc.p$hospital[(adhoc$HOSPITAL == adhoc$c_hospital)] <- 1
+adhoc.p$hospital[!(adhoc$HOSPITAL == adhoc$c_hospital)] <- 0
+adhoc.p$firstname.sdx[(adhoc$firstname_sdx == adhoc$c_firstname_sdx)]<- 1
+adhoc.p$firstname.sdx[!(adhoc$firstname_sdx == adhoc$c_firstname_sdx)] <- 0
+adhoc.p$lastname.sdx[(adhoc$lastname_sdx == adhoc$c_lastname_sdx)] <- 1
+adhoc.p$lastname.sdx[!(adhoc$lastname_sdx == adhoc$c_lastname_sdx)] <- 0
+adhoc.p$subname <- NameContains(str1=adhoc$lastname,str2=adhoc$c_lastname)
+adhoc.p$score <- adhoc$score
+
+half.1 <- subset(adhoc,select=c(recordID,firstname,lastname,MINAME,suffix,ssnL4,SEX,
+                 ZIPCODE,ZIPPLUS4,COUNTYRES,HOSPITAL,firstname_sdx,lastname_sdx))
+half.1$month <- substr(adhoc$DOB,1,2)
+half.1$day   <- substr(adhoc$DOB,4,5)
+half.1$year  <- substr(adhoc$DOB,7,10)
+half.1$subname <- adhoc$lastname
+
+names(half.1) <- c('recordID','firstname','lastname','miname','suffix','ssnL4','sex','zipcode',
+                   'zippplus4','countyres','hospital','firstname.sdx','lastname.sdx','month',
+                   'day','year','subname')
+
+half.2 <- subset(adhoc,select=c(c_recordID,c_firstname,c_lastname,c_miname,c_suffix,c_ssnl4,c_sex,c_zipcode,
+                                c_zipplus4,c_countyres,c_hospital,c_firstname_sdx,c_lastname_sdx))
+half.2$month <- substr(adhoc$c_dob,1,2)
+half.2$day   <- substr(adhoc$c_dob,4,5)
+half.2$year  <- substr(adhoc$c_dob,7,10)
+half.2$subname <- adhoc$c_lastname
+
+names(half.2) <- c('recordID','firstname','lastname','miname','suffix','ssnL4','sex','zipcode',
+                   'zippplus4','countyres','hospital','firstname.sdx','lastname.sdx','month',
+                   'day','year','subname')
+
+all <- rbind(half.1,half.2)
+uniq.all <- unique(all)
+rm(all,half.1,half.2)
+
+# add row indexes to the pairs frame
+index1 <- data.frame(recordID1=uniq.all$recordID,id1=rep(NA,dim(uniq.all)[1]))
+index1$id1 <- as.numeric(row.names(index1))
+p1 <- merge(adhoc.p,index1,by='recordID1',sort=F)
+index2 <- data.frame(recordID2=index1$recordID1,id2=index1$id1)
+p2 <- merge(p1,index2,by='recordID2',sort=F)
+
+pairs <- p2[order(p2$id1,p2$id2),c(20,21,3:19)]
+pairs$is_match <- rep(NA,dim(pairs)[1])
+rm(index1,index2,p1,p2)
+
+adhocpairs <- list(data=uniq.all,pairs=pairs[,c(1:18,20)],frequencies=sapply(uniq.all[,-c(1)],function(x) 1/length(table(x))),
+                   type="deduplication",score=pairs$score)
+class(adhocpairs) <- "RecLinkData"
+
+rm(pairs,uniq.all)
+%@
+\end{verbatim}
+\efs
+
+Now that I have created a RecLinkData object, I will get a training set,
+score it, build a model, and predict matches.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+adhoc.train <- getMinimalTrain(adhocpairs,nEx=3)
+adhoc.train <- editMatch(adhoc.train)
+
+# compare scores by match status
+match <- select(adhoc.train$pairs,id1,id2,is_match)
+allscores <- cbind(select(adhocpairs$pairs, id1, id2), score=adhocpairs$score)
+match.score <- merge(match, allscores, by=c('id1','id2'), all=F)
+
+with(match.score, table(score,is_match))
+
+     is_match
+score   0   1
+   1  326   2
+   2  249   3
+   3  260  14
+   4  234   2
+   5  193   2
+   6  176   7
+   7  139   3
+   8  136  10
+   9  103   4
+   10 122   1
+   11  86   6
+   12  91   1
+   13  79   7
+   14  81   3
+   15  76   6
+   16  49  11
+   17  58   5
+   18  40   6
+   19  54   5
+   20  45   6
+   21  43   9
+   22  46  10
+   23  34  12
+   24  29   5
+   25  34  13
+   26  25  10
+   27  23  11
+   28  22  12
+   29  25   2
+   30  21  16
+   31  15   4
+   32  13  10
+   33  16   4
+   34  18   9
+   35  30  10
+   36  16   7
+   37  12  10
+   38  17   9
+   39  13   8
+   40  21   9
+   41  13   0
+   42  13  11
+   43   7   4
+   44  11  13
+   45   3   6
+   46   5   5
+   47   6   8
+   48   4   8
+   49   4  24
+   50   7   5
+   51   6   3
+   52   6  10
+   53   4   3
+   54   3  12
+   55   3  11
+   56   2   8
+   57   6  11
+   58   4   4
+   59   1   5
+   60   0  10
+   61   1   1
+   62   5  17
+   63   2   5
+   64   0  11
+   65   5   8
+   66   0  11
+   67   0  10
+   68   1   6
+   69   1  10
+   70   1   6
+   71   1   0
+   72   1   6
+   73   0   2
+   74   2   8
+   75   0   2
+   76   0   7
+   77   0   7
+   78   0   3
+   79   0   3
+   80   0   3
+   81   0   4
+   82   0   7
+   83   0   2
+   84   0   3
+   86   0   1
+   87   0   1
+   89   0   2
+   90   0   2
+   92   0   8
+   94   0   6
+   96   0   3
+
+# fit and implement a model
+adhoc.model <- trainSupv(adhoc.train,method='bagging')
+adhoc.result <- classifySupv(adhoc.model,newdata=adhocpairs)
+
+with(adhoc.result,table(cut(score,breaks=seq(0,100,by=10)),prediction))
+
+          prediction
+                  N        P        L
+  (0,10]   11662830        0      469
+  (10,20]   1794563        0      333
+  (20,30]    300710        0      732
+  (30,40]     47347        0      968
+  (40,50]      4794        0     1962
+  (50,60]       743        0     2485
+  (60,70]        80        0     4290
+  (70,80]        17        0     3233
+  (80,90]         0        0      724
+  (90,100]        0        0      320
+
+# compare score with FS weights
+adhoc.result <- fsWeights(adhoc.result)
+cor(adhoc.result$score,adhoc.result$Wdata)
+[1] 0.5241171
+
+%@
+\end{verbatim}
+\efs
+
+I will conduct manual review of some records:
+\begin{itemize}
+  \item predicted links with score below 20
+  \item predicted non-links with score of 50 or above
+\end{itemize}
+
+This will require me to review 1,749 pairs.
+
+\bfs
+\end{verbatim}
+%@
+review1 <- adhoc.result[(adhoc.result$prediction=='L' & adhoc.result$score < 20) |
+                        (adhoc.result$prediction=='N' & adhoc.result$score >= 50)]
+# put score on the review object also:
+temp <- adhoc.result
+temp$Wdata <- temp$score
+temp2 <- temp[(adhoc.result$prediction=='L' & adhoc.result$score < 20) |
+                        (adhoc.result$prediction=='N' & adhoc.result$score >= 50)]
+review1$score <- temp2$Wdata
+rm(temp,temp2)
+
+review1 <- editMatch(review1)
+
+with(review1,table(pairs$is_match,prediction))
+
+   prediction
+      N   P   L
+  0 851   0 447
+  1 114   0 337
+
+with(review1,table(cut(score,breaks=seq(0,100,by=10)),pairs$is_match))
+
+             0   1
+  (0,10]   310 159
+  (10,20]  137 178
+  (20,30]    0   0
+  (30,40]    0   0
+  (40,50]  111  14
+  (50,60]  663  80
+  (60,70]   65  15
+  (70,80]   12   5
+  (80,90]    0   0
+  (90,100]   0   0
+
+%@
+\end{verbatim}
+\efs
+
+The review indicates that the predictive model was more likely to
+predict a link for pairs with a low score, than I, the human
+reviewer. The data available for linking was not sufficient
+to make a definitive linkage judgement on many of the pairs, and I
+made conservative decisions, and didn't designate a pair a link unless
+I thought the evidence of a link was strong.
+
+Now create a {\tt final.match} field that has the machine learning
+prediction corrected by the manual review, and then extract the pairs
+that were judged to be a match.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+
+match1 <- with(adhoc.result,data.frame(id1=pairs$id1,id2=pairs$id2,Wdata,score,prediction))
+match2 <- with(review1,data.frame(id1=pairs$id1,id2=pairs$id2,match=pairs$is_match))
+match3 <- merge(match1,match2,by=c('id1','id2'),all=T)
+match.final <- rep(NA,length(match3[,1]))
+for(i in 1:length(match3[,1])) {
+   match.final[i] <- if(!is.na(match3$match[i])) match3$match[i] else (as.numeric(match3$prediction[i])-1)/2
+}
+match4 <- data.frame(match3,match.final)
+adhoc.final <- subset(match4, match.final == 1, id1:id2)
+
+adhoc.final$recordID1 <- adhoc.result$data$recordID[adhoc.final$id1]
+adhoc.final$recordID2 <- adhoc.result$data$recordID[adhoc.final$id2]
+
+save(adhoc.final,adhoc.result,adhoc.model,adhoc.train,review1,file='adhocfinalresults.RData')
+
+%@
+\end{verbatim}
+\efs
+
+The data frame {\tt adhoc.final} has the recordIDs for the pairs that
+were classified as links.
+
+\subsection{Prepare files for linking}
+
+Prepare files to write to R. I convert strings that indicate missing
+values (such as `U' for the race codes, and `9999' for SSN) to
+blanks so that the linking routines won't think these represent
+good information.
+
+\begin{lstlisting}[language=sas,caption=CHARS files to csv for R]
+/*
+the length statements are to ensure fields are in a consistent order
+when I read them into R, and the fields are ordered for easiest use
+during the classification of the training set.
+*/
+proc sort data=clink;
+    by seq_no_enc staytype;
+run;
+data clink2;
+   keep seq_no_enc staytype countyres dob firstname hispanic lastname miname race_ami
+   	race_asi race_blk race_haw race_wht sex ssnL4 stateres
+        zipcode zipplus4 hospital suffix;
+   length seq_no_enc $ 10 staytype $ 1 dob 8 firstname $ 20 miname $ 1 lastname $ 20
+          suffix $ 4 ssnL4 $ 4 sex $ 1 zipcode $ 5 zipplus4 $ 4 countyres $ 2 hospital $ 4
+          hispanic race_wht race_blk race_ami race_asi
+          race_haw $ 1 stateres $ 2 ;
+   set clink;
+   if sex = 'U' then sex = '';
+   if statecode = '99' then statecode = '';
+   if zipcode = '99999' then zipcode = '';
+   if zipplus4 in ('0000','9999') then zipplus4 = '';
+   if ssnL4 = '9999' then ssnL4 = '';
+run;
+proc export data=clink2
+   outfile = "c:\data\chars\charslink2009_2013.txt"
+   dbms = csv
+   replace
+   ;
+run;
+\end{lstlisting}
+
+\subsection{Perform linking}
+
+Now read the files into R.
+
+I created a new string comparator function to use with the
+RecordLinkage package, to detect if the value of last name on one
+record is contained within the value of last name on another
+record. This will help with people who get married and combine last
+names, or with people who have many names, and get their last names
+recored inconsistently---sometimes as one name, and sometimes as two names.
+
+When I perform the manual matching for the training set, and when I do
+the manual review of selected machine-linked pairs, the standard that
+I use to declare a pair a match is that I think it is almost certain to
+be a match. If I think there is a plausible scenario by which a pair
+is not a match, then I do not score it as a match. Some examples:
+\begin{itemize}
+  \item A pair in which each member was born during the data
+    collection period (2009-2013), in which the first names and SSNs
+    are blank, but all other information indicates that the pair is
+    related (same lastname, zipcode, etc). These could be twins, so I
+    do not score them a match. (Even though there are many more
+    singletons than twins born, it is not common for singletons to
+    have more than one hospital admission, so two records for related
+    babies are not unlikely to be for twins.)
+  \item A pair in which first name, middle initial, and
+      SSN are the same, but last names are different. These are likely
+      one person who changed his or her last name, and I generally
+      score this as a match. There are about 200 people for each
+      birthdate, and 9,999 different last 4 digits of SSN, so it is
+      unlikely (although not impossible) that two different people
+      would have the same birthdate, first name, middle initial, and
+      SSN. The fact that I see this pattern almost exclusively among
+      adult women supports my conclusion that this pattern results
+      from a name change.
+
+    \item A pair in which first name, middle initial, and last name
+      are all the same, but SSNs are different. If the name is common
+      (say William Smith or Jose Garcia or Hong Nguyen) I would probably score this as
+      not a pair; otherwise I would score it as a pair.
+
+\end{itemize}
+
+Here is the new string comparator function:
+
+<<>>=
+NameContains <- function(str1, str2){
+# Function to compare two strings.
+# Returns:
+#   1 if the shorter string is contained in the other
+#   0 otherwise
+# if the shorter string is longer than 6 characters, then only
+# the first 6 characters are used.
+  score     <- rep(NA,length(str1))
+  longname  <- rep(NA,length(str1))
+  shortname <- rep(NA,length(str1))
+  for(i in 1:length(str1)){
+    if(str1[i]=='' | str2[i]=='' | is.na(str1[i]) | is.na(str2[i])) score[i] <- NA else{
+      if(str1[i] == str2[i]) score[i] <- 1 else {
+        if(nchar(str1[i]) >= nchar(str2[i])){longname[i] <- str1[i];
+          shortname[i] <- str2[i]} else {longname[i] <- str2[i]; shortname[i] <- str1[i]}
+        if(nchar(shortname[i]) < 3) score[i] <- 0 else {
+          if(nchar(shortname[i]) > 6)shortname[i] <- substr(shortname[i],1,6)
+          score[i] <- if(grepl(shortname[i],longname[i]))1 else 0
+    }}}}
+  return(score)
+}
+@
+
+\bfs
+\begin{verbatim}
+%<<>>=
+library(RecordLinkage)
+clink.big <- read.csv("../../../data/chars/charslink2009_2013.txt",
+                      colClasses=c(rep("character",20)),
+                      col.names=c("seq_no_enc","staytype","dob","firstname","miname","lastname",
+                      "suffix","ssnL4","sex","zipcode","zipplus4","county","facility","hispanic",
+                      "race.wht","race.blk","race.ami","race.asi","race.haw","statecode"))
+clink <- clink.big[,c(1:13)]
+clink$firstname.sdx <- soundex(clink$firstname)
+clink$lastname.sdx  <- soundex(clink$lastname)
+clink$subname       <- clink$lastname
+# if ssnL4 is '1111' for babies, convert it to blank
+clink$ssnL4 <- ifelse(substr(clink$dob,7,10)>2008&clink$ssnL4=='1111','',clink$ssnL4)
+
+# I will try feb, mar and apr together to build a predictive model
+clink.febtoapr <- clink[substr(clink$dob,1,2)=="02" | substr(clink$dob,1,2)=="03" | substr(clink$dob,1,2)=="04",]
+clink.febtoapr.pairs <- compare.dedup(clink.febtoapr,blockfld=c(3),exclude=c(1,2),
+                                      strcmp=c(16),strcmpfun=NameContains)
+clink.febtoapr.pairs.fsWt <- fsWeights(clink.febtoapr.pairs)
+save(clink.febtoapr.pairs.fsWt,file='febtoaprpairs.RData')
+rm(clink.febtoapr.pairs)
+
+clink.febtoapr.train10 <- getMinimalTrain(clink.febtoapr.pairs.fsWt,nEx=10)
+save(clink.febtoapr.train10,file="clink.febtoapr.train10.RData")
+clink.febtoapr.train10 <- editMatch(clink.febtoapr.train10)
+
+model.revisit.bag <- trainSupv(clink.febtoapr.train10,method='bagging')
+save(model.revisit.bag,file="model.revisit.RData")
+
+load(file='model.revisit.RData')
+
+# January
+clink.jan <- clink[substr(clink$dob,1,2)=="01",]
+clink.jan.pairs <- compare.dedup(clink.jan,blockfld=c(3),exclude=c(1,2),
+                                      strcmp=c(16),strcmpfun=NameContains)
+clink.jan.pairs.fsWt <- fsWeights(clink.jan.pairs)
+rm(clink.jan.pairs)
+result.jan.bag <- classifySupv(model.revisit.bag,newdata=clink.jan.pairs.fsWt)
+save(result.jan.bag,clink.jan,clink.jan.pairs.fsWt,file="janpairs.RData")
+save(result.jan.bag,file="result.jan.RData")
+rm(list=c('clink.jan','clink.jan.pairs.fsWt','result.jan.bag'))
+
+# February
+clink.feb <- clink[substr(clink$dob,1,2)=="02",]
+clink.feb.pairs <- compare.dedup(clink.feb,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.feb.pairs.fsWt <- fsWeights(clink.feb.pairs)
+rm(clink.feb.pairs)
+result.feb.bag <- classifySupv(model.revisit.bag,newdata=clink.feb.pairs.fsWt)
+save(result.feb.bag,clink.feb,clink.feb.pairs.fsWt,file="febpairs.RData")
+save(result.feb.bag,file="result.feb.RData")
+rm(list=c('clink.feb','clink.feb.pairs.fsWt','result.feb.bag'))
+
+# March
+clink.mar <- clink[substr(clink$dob,1,2)=="03",]
+clink.mar.pairs <- compare.dedup(clink.mar,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.mar.pairs.fsWt <- fsWeights(clink.mar.pairs)
+rm(clink.mar.pairs)
+result.mar.bag <- classifySupv(model.revisit.bag,newdata=clink.mar.pairs.fsWt)
+save(result.mar.bag,clink.mar,clink.mar.pairs.fsWt,file="marpairs.RData")
+save(result.mar.bag,file="result.mar.RData")
+rm(list=c('clink.mar','clink.mar.pairs.fsWt','result.mar.bag'))
+
+# April
+clink.apr <- clink[substr(clink$dob,1,2)=="04",]
+clink.apr.pairs <- compare.dedup(clink.apr,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.apr.pairs.fsWt <- fsWeights(clink.apr.pairs)
+rm(clink.apr.pairs)
+result.apr.bag <- classifySupv(model.revisit.bag,newdata=clink.apr.pairs.fsWt)
+save(result.apr.bag,clink.apr,clink.apr.pairs.fsWt,file="aprpairs.RData")
+save(result.apr.bag,file="result.apr.RData")
+rm(list=c('clink.apr','clink.apr.pairs.fsWt','result.apr.bag'))
+
+# May
+clink.may <- clink[substr(clink$dob,1,2)=="05",]
+clink.may.pairs <- compare.dedup(clink.may,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.may.pairs.fsWt <- fsWeights(clink.may.pairs)
+rm(clink.may.pairs)
+result.may.bag <- classifySupv(model.revisit.bag,newdata=clink.may.pairs.fsWt)
+save(result.may.bag,clink.may,clink.may.pairs.fsWt,file="maypairs.RData")
+save(result.may.bag,file="result.may.RData")
+rm(list=c('clink.may','clink.may.pairs.fsWt','result.may.bag'))
+
+# June
+clink.jun <- clink[substr(clink$dob,1,2)=="06",]
+clink.jun.pairs <- compare.dedup(clink.jun,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.jun.pairs.fsWt <- fsWeights(clink.jun.pairs)
+rm(clink.jun.pairs)
+result.jun.bag <- classifySupv(model.revisit.bag,newdata=clink.jun.pairs.fsWt)
+save(result.jun.bag,clink.jun,clink.jun.pairs.fsWt,file="junpairs.RData")
+save(result.jun.bag,file="result.jun.RData")
+rm(list=c('clink.jun','clink.jun.pairs.fsWt','result.jun.bag'))
+
+# July
+clink.jul <- clink[substr(clink$dob,1,2)=="07",]
+clink.jul.pairs <- compare.dedup(clink.jul,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.jul.pairs.fsWt <- fsWeights(clink.jul.pairs)
+rm(clink.jul.pairs)
+result.jul.bag <- classifySupv(model.revisit.bag,newdata=clink.jul.pairs.fsWt)
+save(result.jul.bag,clink.jul,clink.jul.pairs.fsWt,file="julpairs.RData")
+save(result.jul.bag,file="result.jul.RData")
+rm(list=c('clink.jul','clink.jul.pairs.fsWt','result.jul.bag'))
+
+# August
+clink.aug <- clink[substr(clink$dob,1,2)=="08",]
+clink.aug.pairs <- compare.dedup(clink.aug,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.aug.pairs.fsWt <- fsWeights(clink.aug.pairs)
+rm(clink.aug.pairs)
+result.aug.bag <- classifySupv(model.revisit.bag,newdata=clink.aug.pairs.fsWt)
+save(result.aug.bag,clink.aug,clink.aug.pairs.fsWt,file="augpairs.RData")
+save(result.aug.bag,file="result.aug.RData")
+rm(list=c('clink.aug','clink.aug.pairs.fsWt','result.aug.bag'))
+
+# September
+clink.sep <- clink[substr(clink$dob,1,2)=="09",]
+clink.sep.pairs <- compare.dedup(clink.sep,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.sep.pairs.fsWt <- fsWeights(clink.sep.pairs)
+rm(clink.sep.pairs)
+result.sep.bag <- classifySupv(model.revisit.bag,newdata=clink.sep.pairs.fsWt)
+save(result.sep.bag,clink.sep,clink.sep.pairs.fsWt,file="seppairs.RData")
+save(result.sep.bag,file="result.sep.RData")
+rm(list=c('clink.sep','clink.sep.pairs.fsWt','result.sep.bag'))
+
+# October
+clink.oct <- clink[substr(clink$dob,1,2)=="10",]
+clink.oct.pairs <- compare.dedup(clink.oct,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.oct.pairs.fsWt <- fsWeights(clink.oct.pairs)
+rm(clink.oct.pairs)
+result.oct.bag <- classifySupv(model.revisit.bag,newdata=clink.oct.pairs.fsWt)
+save(result.oct.bag,clink.oct,clink.oct.pairs.fsWt,file="octpairs.RData")
+save(result.oct.bag,file="result.oct.RData")
+rm(list=c('clink.oct','clink.oct.pairs.fsWt','result.oct.bag'))
+
+# November
+clink.nov <- clink[substr(clink$dob,1,2)=="11",]
+clink.nov.pairs <- compare.dedup(clink.nov,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.nov.pairs.fsWt <- fsWeights(clink.nov.pairs)
+rm(clink.nov.pairs)
+result.nov.bag <- classifySupv(model.revisit.bag,newdata=clink.nov.pairs.fsWt)
+save(result.nov.bag,clink.nov,clink.nov.pairs.fsWt,file="novpairs.RData")
+save(result.nov.bag,file="result.nov.RData")
+rm(list=c('clink.nov','clink.nov.pairs.fsWt','result.nov.bag'))
+
+# December
+clink.dec <- clink[substr(clink$dob,1,2)=="12",]
+clink.dec.pairs <- compare.dedup(clink.dec,blockfld=c(3),exclude=c(1,2),
+                                 strcmp=c(16),strcmpfun=NameContains)
+clink.dec.pairs.fsWt <- fsWeights(clink.dec.pairs)
+rm(clink.dec.pairs)
+result.dec.bag <- classifySupv(model.revisit.bag,newdata=clink.dec.pairs.fsWt)
+save(result.dec.bag,clink.dec,clink.dec.pairs.fsWt,file="decpairs.RData")
+save(result.dec.bag,file="result.dec.RData")
+rm(list=c('clink.dec','clink.dec.pairs.fsWt','result.dec.bag'))
+
+%@
+\end{verbatim}
+\efs
+
+\begin{figure}
+\centering
+<<weights1,fig=T,echo=F,eps=F,results=hide,width=6,height=6>>=
+plot(density(result.jan.bag$Wdata,bw=2),col=2,lwd=2,main='January weights',xlab='F-S weight')
+abline(h=0)
+@
+\caption{\label{weights1}Density of the Fellegi-Sunter weights for record pairs of patients born in January.}
+\end{figure}
+
+\begin{figure}
+\centering
+<<weights2,fig=T,echo=F,eps=F,results=hide,width=6,height=6>>=
+plot(density(result.jan.bag$Wdata[result.jan.bag$prediction=='N'],bw=2),col=4,lwd=2,
+     main='January weights',xlab='F-S weight',ylim=c(0,0.1),xlim=c(-50,145))
+lines(density(result.jan.bag$Wdata[result.jan.bag$prediction=='L'],bw=2),col=2,lwd=2)
+@
+\caption{\label{weights2}Fellegi-Sunter weights for record pairs of patients born in January, by predicted link status.
+Each line is a separate density plot (meaning they are not to scale).}
+\end{figure}
+
+Find the range of scores for predicted links and predicted non-links:
+
+\bfs
+\begin{verbatim}
+%<<>>=
+load(file='result.jan.RData')
+load(file='result.feb.RData')
+load(file='result.mar.RData')
+load(file='result.apr.RData')
+load(file='result.may.RData')
+load(file='result.jun.RData')
+load(file='result.jul.RData')
+load(file='result.aug.RData')
+load(file='result.sep.RData')
+load(file='result.oct.RData')
+load(file='result.nov.RData')
+load(file='result.dec.RData')
+
+ranges <- data.frame(Nmin=rep(NA,12),Nmax=rep(NA,12),Lmin=rep(NA,12),Lmax=rep(NA,12))
+ranges[1,c(1,2)] <- with(result.jan.bag[result.jan.bag$prediction=='N'],range(Wdata))
+ranges[1,c(3,4)] <- with(result.jan.bag[result.jan.bag$prediction=='L'],range(Wdata))
+ranges[2,c(1,2)] <- with(result.feb.bag[result.feb.bag$prediction=='N'],range(Wdata))
+ranges[2,c(3,4)] <- with(result.feb.bag[result.feb.bag$prediction=='L'],range(Wdata))
+ranges[3,c(1,2)] <- with(result.mar.bag[result.mar.bag$prediction=='N'],range(Wdata))
+ranges[3,c(3,4)] <- with(result.mar.bag[result.mar.bag$prediction=='L'],range(Wdata))
+ranges[4,c(1,2)] <- with(result.apr.bag[result.apr.bag$prediction=='N'],range(Wdata))
+ranges[4,c(3,4)] <- with(result.apr.bag[result.apr.bag$prediction=='L'],range(Wdata))
+ranges[5,c(1,2)] <- with(result.may.bag[result.may.bag$prediction=='N'],range(Wdata))
+ranges[5,c(3,4)] <- with(result.may.bag[result.may.bag$prediction=='L'],range(Wdata))
+ranges[6,c(1,2)] <- with(result.jun.bag[result.jun.bag$prediction=='N'],range(Wdata))
+ranges[6,c(3,4)] <- with(result.jun.bag[result.jun.bag$prediction=='L'],range(Wdata))
+
+ranges[7,c(1,2)]  <- range(result.jul.bag$Wdata[result.jul.bag$prediction=='N'])
+ranges[7,c(3,4)]  <- range(result.jul.bag$Wdata[result.jul.bag$prediction=='L'])
+ranges[8,c(1,2)]  <- range(result.aug.bag$Wdata[result.aug.bag$prediction=='N'])
+ranges[8,c(3,4)]  <- range(result.aug.bag$Wdata[result.aug.bag$prediction=='L'])
+ranges[9,c(1,2)]  <- range(result.sep.bag$Wdata[result.sep.bag$prediction=='N'])
+ranges[9,c(3,4)]  <- range(result.sep.bag$Wdata[result.sep.bag$prediction=='L'])
+ranges[10,c(1,2)] <- range(result.oct.bag$Wdata[result.oct.bag$prediction=='N'])
+ranges[10,c(3,4)] <- range(result.oct.bag$Wdata[result.oct.bag$prediction=='L'])
+ranges[11,c(1,2)] <- range(result.nov.bag$Wdata[result.nov.bag$prediction=='N'])
+ranges[11,c(3,4)] <- range(result.nov.bag$Wdata[result.nov.bag$prediction=='L'])
+ranges[12,c(1,2)] <- range(result.dec.bag$Wdata[result.dec.bag$prediction=='N'])
+ranges[12,c(3,4)] <- range(result.dec.bag$Wdata[result.dec.bag$prediction=='L'])
+
+max(ranges[,2])
+min(ranges[,3])
+
+countsbymonth <- rep(NA,12)
+countsbymonth[1] <- length(result.jan.bag$Wdata)
+countsbymonth[2] <- length(result.feb.bag$Wdata)
+countsbymonth[3] <- length(result.mar.bag$Wdata)
+countsbymonth[4] <- length(result.apr.bag$Wdata)
+countsbymonth[5] <- length(result.may.bag$Wdata)
+countsbymonth[6] <- length(result.jun.bag$Wdata)
+
+countsbymonth[7] <- length(result.jul.bag$Wdata)
+countsbymonth[8] <- length(result.aug.bag$Wdata)
+countsbymonth[9] <- length(result.sep.bag$Wdata)
+countsbymonth[10] <- length(result.oct.bag$Wdata)
+countsbymonth[11] <- length(result.nov.bag$Wdata)
+countsbymonth[12] <- length(result.dec.bag$Wdata)
+
+%@
+\end{verbatim}
+\efs
+
+The maximum weight among predicted non-links is 67.9, and the minimum
+weights among predicted links is -6.5. I will assess the accuracy of
+links in 10-point intervals between -10 and 70.
+
+\bfs
+\begin{verbatim}
+%<<>>=
+id1.all.part1   <- c(result.jan.bag$pairs$id1,result.feb.bag$pairs$id1,result.mar.bag$pairs$id1,
+               result.apr.bag$pairs$id1,result.may.bag$pairs$id1,result.jun.bag$pairs$id1)
+id2.all.part1   <- c(result.jan.bag$pairs$id2,result.feb.bag$pairs$id2,result.mar.bag$pairs$id2,
+               result.apr.bag$pairs$id2,result.may.bag$pairs$id2,
+               result.jun.bag$pairs$id2)
+Wdata.all.part1 <- c(result.jan.bag$Wdata,result.feb.bag$Wdata,result.mar.bag$Wdata,
+                     result.apr.bag$Wdata,result.may.bag$Wdata,result.jun.bag$Wdata)
+prediction.all.part1 <- unlist(list(result.jan.bag$prediction,result.feb.bag$prediction,
+                           result.mar.bag$prediction,result.apr.bag$prediction,
+                           result.may.bag$prediction,result.jun.bag$prediction))
+month.part1 <- c(rep('01',length(result.jan.bag$Wdata)),rep('02',length(result.feb.bag$Wdata)),
+           rep('03',length(result.mar.bag$Wdata)),rep('04',length(result.apr.bag$Wdata)),
+           rep('05',length(result.may.bag$Wdata)),rep('06',length(result.jun.bag$Wdata)))
+
+id1.all.part2   <- c(result.jul.bag$pairs$id1,result.aug.bag$pairs$id1,result.sep.bag$pairs$id1,
+                     result.oct.bag$pairs$id1,result.nov.bag$pairs$id1,result.dec.bag$pairs$id1)
+id2.all.part2   <- c(result.jul.bag$pairs$id2,result.aug.bag$pairs$id2,
+                     result.sep.bag$pairs$id2,result.oct.bag$pairs$id2,
+                     result.nov.bag$pairs$id2,result.dec.bag$pairs$id2)
+Wdata.all.part2 <- c(result.jul.bag$Wdata,result.aug.bag$Wdata,result.sep.bag$Wdata,
+                     result.oct.bag$Wdata,result.nov.bag$Wdata,result.dec.bag$Wdata)
+prediction.all.part2 <- unlist(list(result.jul.bag$prediction,result.aug.bag$prediction,
+                           result.sep.bag$prediction,result.oct.bag$prediction,
+                           result.nov.bag$prediction,result.dec.bag$prediction))
+month.part2 <- c(rep('07',length(result.jul.bag$Wdata)),rep('08',length(result.aug.bag$Wdata)),
+                 rep('09',length(result.sep.bag$Wdata)),rep('10',length(result.oct.bag$Wdata)),
+                 rep('11',length(result.nov.bag$Wdata)),rep('12',length(result.dec.bag$Wdata)))
+
+wp <- data.frame(id1.all=c(id1.all.part1,id1.all.part2),id2.all=c(id2.all.part1,id2.all.part2),
+                 Wdata.all=c(Wdata.all.part1,Wdata.all.part2),
+                 prediction.all=unlist(list(prediction.all.part1,prediction.all.part2)),
+                 month=c(month.part1,month.part2))
+
+wp$prediction.all <- unlist(list(prediction.all.part1,prediction.all.part2))
+
+tab.nonlink<-table(cut(wp$Wdata.all[wp$prediction.all=='N'],
+                   breaks=c(-50,-10,0,10,20,30,40,50,60,70,95,155)))
+tab.link<-table(cut(wp$Wdata.all[wp$prediction.all=='L'],
+                   breaks=c(-50,-10,0,10,20,30,40,50,60,70,95,155)))
+xtable(cbind(tab.nonlink,tab.link))
+%@
+\end{verbatim}
+\efs
+
+\begin{table}[ht]
+  \caption{Frequency table of Fellegi-Sunter weights by machine-predicted links.}
+\centering
+\begin{tabular}{rrrr}
+  \hline
+ & predicted & predicted & total \\
+FS weight & non-link & link & pairs \\
+  \hline
+ (-50,-10] & 240715759 & 0       & 240715759\\
+ (-10,0]   & 1326114   & 259     &   1326373\\
+ (0,10]    & 169970    & 220     &    170190\\
+ (10,20]   & 132641    & 476     &    133117\\
+ (20,30]   & 29981     & 6397    &     36378\\
+ (30,40]   & 9254      & 13068   &     22322\\
+ (40,50]   & 9465      & 23554   &     33019\\
+ (50,60]   & 9119      & 41449   &     50568\\
+ (60,70]   & 1684      & 133590  &    135274\\
+ (70,95]   & 347       & 1262175 &   1262522\\
+ (95,155]  & 0         & 3955116 &   3955116\\
+ \hline
+ total     & 242404334 & 5436304 & 247840638\\
+ \hline
+\end{tabular}
+\end{table}
+
+I will review all the links with a weight of 20 or less, and all the
+non-links with a weight of 60 or more. From the other 10-point
+intervals, I will select a large enough sample to estimate the
+machine-linking accuracy to within 1 percentage point (by this I mean
+a 95\% CI that is no more than 2 percentage points wide). For the
+purpose of sample size estimation, I assume the prediction accuracy to
+be 95\% for both predicted links and non-links with a weight between
+20 and 60, 99\% for predicted links with a weight higher than 40, and
+99\% for predicted non-links with a weight lower than 20.
+
+The formula for calculating sample size is:
+
+\begin{displaymath}
+  n = \frac{p(1-p)}{0.005^2}
+\end{displaymath}
+
+where $p$ is the estimated prediction accuracy. The estimated required
+sample size is 400 for intervals in which the assumed linking accuracy
+is 99\%, and 1,900 for intervals in which the assumed accuracy is
+95\%. For the 4 intervals where the FS weight is between 20 and 60, I
+will draw a random sample of 1,900 of all the records, without
+stratifying on predicted link status. For the other intervals, I am
+already planning to review all the links with weights below 20, and
+all the non-links with weights above 60, so for those intervals, I
+will select a random sample of 400 from each 10-point interval among
+non-links with weights below 20, and links with weights above 60.
+
+This will require me to manually code 12,586 pairs.
+
+I will label each record pair with a stratum identifier as follows:
+
+\begin{tabular}{lp{2.3in}r}
+ stratum & definition                                                                        & sample size \\ \hline
+ 1       & not sampled (weight $\le$ -10 or weight $>$ 95)                                   & 0                   \\
+ 2       & sampled with certainty (links with weight $\le$ 20; non-links with weight $>$ 60) &                     \\
+ 3       & non-links with -10 $<$ weight $\le $ 0                                            & 400                 \\
+ 4       & non-links with 0 $<$ weight $\le$ 10                                              & 400                 \\
+ 5       & non-links with 10 $<$ weight $\le$ 20                                             & 400                 \\
+ 6       & links and non-links with 20 $<$ weight $\le$ 30                                   & 1,900               \\
+ 7       & links and non-links with 30 $<$ weight $\le$ 40                                   & 1,900               \\
+ 8       & links and non-links with 40 $<$ weight $\le$ 50                                   & 1,900               \\
+ 9       & links and non-links with 50 $<$ weight $\le$ 60                                   & 1,900               \\
+10       & links with 60 $<$ weight $ \le$ 70                                                & 400                 \\
+11       & links with 70 $<$ weight $\le$ 95                                                 & 400                 \\ \hline
+\end{tabular}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+stratum <- rep(NA,length(wp[,1]))
+for(i in 1:length(stratum)){
+   if(wp$Wdata[i] <= -10 | wp$Wdata[i] > 95)
+                            {stratum[i] <- 1}
+   else if ((wp$prediction[i] == 'L' & wp$Wdata[i] <= 20) | (wp$prediction[i] == 'N' &
+       wp$Wdata[i] > 60))   {stratum[i] <- 2}
+   else if (wp$prediction[i] == 'N'  & wp$Wdata[i] > -10                             &
+       wp$Wdata[i] <= 0)    {stratum[i] <- 3}
+   else if (wp$prediction[i] == 'N'  & wp$Wdata[i] > 0                               & wp$Wdata[i] <= 10){stratum[i] <- 4}
+   else if (wp$prediction[i] == 'N'  & wp$Wdata[i] > 10                              & wp$Wdata[i] <= 20){stratum[i] <- 5}
+   else if (wp$Wdata[i] > 20         & wp$Wdata[i] <= 30)                                                {stratum[i] <- 6}
+   else if (wp$Wdata[i] > 30         & wp$Wdata[i] <= 40)                                                {stratum[i] <- 7}
+   else if (wp$Wdata[i] > 40         & wp$Wdata[i] <= 50)                                                {stratum[i] <- 8}
+   else if (wp$Wdata[i] > 50         & wp$Wdata[i] <= 60)                                                {stratum[i] <- 9}
+   else if (wp$prediction[i] == 'L'  & wp$Wdata[i] > 60                              & wp$Wdata[i] <= 70){stratum[i] <- 10}
+   else if (wp$prediction[i] == 'L'  & wp$Wdata[i] > 70                              & wp$Wdata[i] <= 95){stratum[i] <- 11}
+   else stratum[i] <- 12
+}
+wp <- data.frame(wp,stratum)
+
+strata.count <- data.frame(table(wp$stratum),c(0,1,400,400,400,1900,1900,1900,1900,400,400))
+colnames(strata.count) <- c('stratum','N','n')
+
+library(TeachingDemos)
+char2seed('revisit') # this seed is 2121383
+
+sample2 <- wp[which(wp$stratum==2),]
+sample3 <- wp[which(wp$stratum==3),][sample(strata.count[3,2],strata.count[3,3]),]
+sample4 <- wp[which(wp$stratum==4),][sample(strata.count[4,2],strata.count[4,3]),]
+sample5 <- wp[which(wp$stratum==5),][sample(strata.count[5,2],strata.count[5,3]),]
+sample6 <- wp[which(wp$stratum==6),][sample(strata.count[6,2],strata.count[6,3]),]
+sample7 <- wp[which(wp$stratum==7),][sample(strata.count[7,2],strata.count[7,3]),]
+sample8 <- wp[which(wp$stratum==8),][sample(strata.count[8,2],strata.count[8,3]),]
+sample9 <- wp[which(wp$stratum==9),][sample(strata.count[9,2],strata.count[9,3]),]
+sample10 <- wp[which(wp$stratum==10),][sample(strata.count[10,2],strata.count[10,3]),]
+sample11 <- wp[which(wp$stratum==11),][sample(strata.count[11,2],strata.count[11,3]),]
+allsamples <- rbind(sample2,sample3,sample4,sample5,sample6,sample7,sample8,sample9,sample10,sample11)
+set.seed(seed=NULL)
+
+load("result.jan.RData")
+samplerows            <- allsamples[which(allsamples$month=='01'),]
+sample.jan            <- result.jan.bag[rownames(samplerows)]
+sample.jan$Wdata      <- samplerows$Wdata
+sample.jan$prediction <- samplerows$prediction
+sample.jan$stratum    <- samplerows$stratum
+rm(result.jan.bag)
+
+load("result.feb.RData")
+samplerows            <- allsamples[which(allsamples$month=='02'),]
+sample.feb            <- result.feb.bag[as.numeric(rownames(samplerows))-countsbymonth[1]]
+sample.feb$Wdata      <- samplerows$Wdata
+sample.feb$prediction <- samplerows$prediction
+sample.feb$stratum    <- samplerows$stratum
+rm(result.feb.bag)
+
+load("result.mar.RData")
+samplerows            <- allsamples[which(allsamples$month=='03'),]
+sample.mar            <- result.mar.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:2)])]
+sample.mar$Wdata      <- samplerows$Wdata
+sample.mar$prediction <- samplerows$prediction
+sample.mar$stratum    <- samplerows$stratum
+rm(result.mar.bag)
+
+load("result.apr.RData")
+samplerows            <- allsamples[which(allsamples$month=='04'),]
+sample.apr            <- result.apr.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:3)])]
+sample.apr$Wdata      <- samplerows$Wdata
+sample.apr$prediction <- samplerows$prediction
+sample.apr$stratum    <- samplerows$stratum
+rm(result.apr.bag)
+
+load("result.may.RData")
+samplerows            <- allsamples[which(allsamples$month=='05'),]
+sample.may            <- result.may.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:4)])]
+sample.may$Wdata      <- samplerows$Wdata
+sample.may$prediction <- samplerows$prediction
+sample.may$stratum    <- samplerows$stratum
+rm(result.may.bag)
+
+load("result.jun.RData")
+samplerows            <- allsamples[which(allsamples$month=='06'),]
+sample.jun            <- result.jun.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:5)])]
+sample.jun$Wdata      <- samplerows$Wdata
+sample.jun$prediction <- samplerows$prediction
+sample.jun$stratum    <- samplerows$stratum
+rm(result.jun.bag)
+
+load("result.jul.RData")
+samplerows            <- allsamples[which(allsamples$month=='07'),]
+sample.jul            <- result.jul.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:6)])]
+sample.jul$Wdata      <- samplerows$Wdata
+sample.jul$prediction <- samplerows$prediction
+sample.jul$stratum    <- samplerows$stratum
+rm(result.jul.bag)
+
+load("result.aug.RData")
+samplerows            <- allsamples[which(allsamples$month=='08'),]
+sample.aug            <- result.aug.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:7)])]
+sample.aug$Wdata      <- samplerows$Wdata
+sample.aug$prediction <- samplerows$prediction
+sample.aug$stratum    <- samplerows$stratum
+rm(result.aug.bag)
+
+load("result.sep.RData")
+samplerows            <- allsamples[which(allsamples$month=='09'),]
+sample.sep            <- result.sep.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:8)])]
+sample.sep$Wdata      <- samplerows$Wdata
+sample.sep$prediction <- samplerows$prediction
+sample.sep$stratum    <- samplerows$stratum
+rm(result.sep.bag)
+
+load("result.oct.RData")
+samplerows            <- allsamples[which(allsamples$month=='10'),]
+sample.oct            <- result.oct.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:9)])]
+sample.oct$Wdata      <- samplerows$Wdata
+sample.oct$prediction <- samplerows$prediction
+sample.oct$stratum    <- samplerows$stratum
+rm(result.oct.bag)
+
+load("result.nov.RData")
+samplerows            <- allsamples[which(allsamples$month=='11'),]
+sample.nov            <- result.nov.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:10)])]
+sample.nov$Wdata      <- samplerows$Wdata
+sample.nov$prediction <- samplerows$prediction
+sample.nov$stratum    <- samplerows$stratum
+rm(result.nov.bag)
+
+load("result.dec.RData")
+samplerows            <- allsamples[which(allsamples$month=='12'),]
+sample.dec            <- result.dec.bag[as.numeric(rownames(samplerows))-sum(countsbymonth[c(1:11)])]
+sample.dec$Wdata      <- samplerows$Wdata
+sample.dec$prediction <- samplerows$prediction
+sample.dec$stratum    <- samplerows$stratum
+rm(result.dec.bag)
+
+rm(samplerows)
+save(list=ls(pat='sample'),file='RevisitTestSamples.RData')
+
+sample.jan <- editMatch(sample.jan)
+sample.feb <- editMatch(sample.feb)
+sample.mar <- editMatch(sample.mar)
+
+wrongprediction.jan <- sample.jan[2*sample.jan$pairs$is_match+1 != as.numeric(sample.jan$prediction)]
+wrongprediction.feb <- sample.feb[2*sample.feb$pairs$is_match+1 != as.numeric(sample.feb$prediction)]
+wrongprediction.mar <- sample.mar[2*sample.mar$pairs$is_match+1 != as.numeric(sample.mar$prediction)]
+wrongprediction.apr <- sample.apr[2*sample.apr$pairs$is_match+1 != as.numeric(sample.apr$prediction)]
+wrongprediction.may <- sample.may[2*sample.may$pairs$is_match+1 != as.numeric(sample.may$prediction)]
+wrongprediction.jun <- sample.jun[2*sample.jun$pairs$is_match+1 != as.numeric(sample.jun$prediction)]
+wrongprediction.jul <- sample.jul[2*sample.jul$pairs$is_match+1 != as.numeric(sample.jul$prediction)]
+wrongprediction.aug <- sample.aug[2*sample.aug$pairs$is_match+1 != as.numeric(sample.aug$prediction)]
+wrongprediction.sep <- sample.sep[2*sample.sep$pairs$is_match+1 != as.numeric(sample.sep$prediction)]
+wrongprediction.oct <- sample.oct[2*sample.oct$pairs$is_match+1 != as.numeric(sample.oct$prediction)]
+wrongprediction.nov <- sample.nov[2*sample.nov$pairs$is_match+1 != as.numeric(sample.nov$prediction)]
+wrongprediction.dec <- sample.dec[2*sample.dec$pairs$is_match+1 != as.numeric(sample.dec$prediction)]
+
+wrongprediction.jan <- editMatch(wrongprediction.jan)
+wrongprediction.feb <- editMatch(wrongprediction.feb)
+wrongprediction.mar <- editMatch(wrongprediction.mar)
+wrongprediction.apr <- editMatch(wrongprediction.apr)
+wrongprediction.may <- editMatch(wrongprediction.may)
+wrongprediction.jun <- editMatch(wrongprediction.jun)
+wrongprediction.jul <- editMatch(wrongprediction.jul)
+wrongprediction.aug <- editMatch(wrongprediction.aug)
+wrongprediction.sep <- editMatch(wrongprediction.sep)
+wrongprediction.oct <- editMatch(wrongprediction.oct)
+wrongprediction.nov <- editMatch(wrongprediction.nov)
+wrongprediction.dec <- editMatch(wrongprediction.dec)
+
+correctmatches.func <- function(dframe1,dframe2){
+   match1 <- with(dframe1,data.frame(id1=pairs$id1,id2=pairs$id2,stratum,Wdata,prediction,match=pairs$is_match))
+   match2 <- with(dframe2,data.frame(id1=pairs$id1,id2=pairs$id2,match.corrected=pairs$is_match))
+   match3 <- merge(match1,match2,by=c('id1','id2'),all=T)
+   match.final <- rep(NA,length(match3[,1]))
+   for(i in 1:length(match3[,1])) {
+      match.final[i] <- if(is.na(match3$match.corrected[i])) match3$match[i] else match3$match.corrected[i]
+      }
+   data.frame(match3,match.final)
+}
+
+corrected.jan <- correctmatches.func(sample.jan,wrongprediction.jan)
+corrected.feb <- correctmatches.func(sample.feb,wrongprediction.feb)
+corrected.mar <- correctmatches.func(sample.mar,wrongprediction.mar)
+corrected.apr <- correctmatches.func(sample.apr,wrongprediction.apr)
+corrected.may <- correctmatches.func(sample.may,wrongprediction.may)
+corrected.jun <- correctmatches.func(sample.jun,wrongprediction.jun)
+corrected.jul <- correctmatches.func(sample.jul,wrongprediction.jul)
+corrected.aug <- correctmatches.func(sample.aug,wrongprediction.aug)
+corrected.sep <- correctmatches.func(sample.sep,wrongprediction.sep)
+corrected.oct <- correctmatches.func(sample.oct,wrongprediction.oct)
+corrected.nov <- correctmatches.func(sample.nov,wrongprediction.nov)
+corrected.dec <- correctmatches.func(sample.dec,wrongprediction.dec)
+
+
+revisit.eval <- rbind(with(corrected.jan,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.feb,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.mar,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.apr,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.may,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.jun,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.jul,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.aug,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.sep,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.oct,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.nov,data.frame(stratum,Wdata,prediction,match=match.final)),
+                      with(corrected.dec,data.frame(stratum,Wdata,prediction,match=match.final)))
+
+save(list=ls(pat='sample|wrongprediction'),revisit.eval,file='RevisitTestSamples.RData')
+
+addseqno.func <- function(corrected,sample){
+# add CHARS id (seq_no_enc) to each row in each months's data frame
+   temp <- corrected[,c(1,2,8)]
+   temp$seqno1 <- sample$data$seq_no_enc[temp$id1]
+   temp$seqno2 <- sample$data$seq_no_enc[temp$id2]
+   temp
+}
+
+corrected2.jan <- addseqno.func(corrected=corrected.jan,sample=sample.jan)
+corrected2.feb <- addseqno.func(corrected=corrected.feb,sample=sample.feb)
+corrected2.mar <- addseqno.func(corrected=corrected.mar,sample=sample.mar)
+corrected2.apr <- addseqno.func(corrected=corrected.apr,sample=sample.apr)
+corrected2.may <- addseqno.func(corrected=corrected.may,sample=sample.may)
+corrected2.jun <- addseqno.func(corrected=corrected.jun,sample=sample.jun)
+corrected2.jul <- addseqno.func(corrected=corrected.jul,sample=sample.jul)
+corrected2.aug <- addseqno.func(corrected=corrected.aug,sample=sample.aug)
+corrected2.sep <- addseqno.func(corrected=corrected.sep,sample=sample.sep)
+corrected2.oct <- addseqno.func(corrected=corrected.oct,sample=sample.oct)
+corrected2.nov <- addseqno.func(corrected=corrected.nov,sample=sample.nov)
+corrected2.dec <- addseqno.func(corrected=corrected.dec,sample=sample.dec)
+
+save(list=ls(pat='corrected2'),file='CorrectedSampleMatches.RData')
+
+%@
+\end{verbatim}
+\efs
+
+I assessed the machine-linking accuracy among pairs that were not
+selected for manual review. I assume that the machine-predicted links
+in stratum 1 (all pairs with weight $\le$ -10 and all predicted links
+with weight $>$ 95) are all correct.
+
+\begin{tabular}{lrrrrrr}
+         &\multicolumn{2}{c}{total pairs} & \multicolumn{2}{c}{sample} & \% non-links &\% links \\
+ stratum & nonlinks    & links     & nonlinks & links & correct & correct   \\ \hline
+ 1       & 240,715,759 & 3,955,116 & 0        & 0     & 100     & 100       \\
+ 2       &       2,031 &       955 & 2,031    &   955 & 70.0    & 87.1      \\
+ 3       &   1,326,114 &         0 &   400    &     0 & 100     &    \\
+ 4       &     169,970 &         0 &   400    &     0 & 99.8    &    \\
+ 5       &     132,641 &         0 &   400    &     0 & 98.8    &    \\
+ 6       &      29,981 &  6,397    & 1,547    &   353 & 95.1    & 95.2   \\
+ 7       &       9,254 &  13,068   &   811    & 1,089 & 93.3    & 95.7   \\
+ 8       &       9,465 &  23,554   &   535    & 1,365 & 80.2    & 98.8   \\
+ 9       &       9,119 &  41,449   &   347    & 1,553 & 89.9    & 96.3   \\
+10       &           0 &   133,590 &     0    &   400 &         & 99.8   \\
+11       &           0 & 1,262,175 &     0    &   400 &         & 100   \\ \hline
+\end{tabular}
+
+An estimated 99.95\% of the machine-predicted links,
+and an estimated 99.997\% of the machine-predicted non-links agree with a manual classification.
+
+
+\bfs
+\begin{verbatim}
+%<<>>=
+p.nonlink <- with(revisit.eval[revisit.eval$prediction=='N',],table(match,stratum,useNA='ifany'))
+
+strata.count$N.nonlink <- c(
+240715759,
+      2031,
+  1326114,
+    169970,
+    132641,
+     29981,
+      9254,
+      9465,
+      9119,
+          0,
+          0)
+strata.count$N.link <- c(3955116,
+      955,
+        0,
+        0,
+        0,
+  6397,
+  13068,
+  23554 ,
+  41449  ,
+  133590,
+ 1262175)
+
+%@
+\end{verbatim}
+\efs
+
+\subsection{Putting the linked pairs together}
+
+I need to
+\begin{enumerate}
+\item extract a data frame from each month's RecLinkResult object, containing the CHARS
+  sequence numbers for each member of each pair, the values of id1 and id2, and the link
+  status,
+\item merge it with the {\tt corrected2} frame for that month,
+\item Create a new match field that updates the machine predictions with the coded results from the
+  {\tt corrected2} frame,
+\item subset to keep only the links
+\item combine all 12 months,
+\item combine with the {\it adhoc} linkages,
+\item combine the linked pairs into linkage groups
+\end{enumerate}
+
+\bfs
+\begin{verbatim}
+%<<>>=
+library(RecordLinkage); library(plyr); library(dplyr); library(magrittr)
+load('CorrectedSampleMatches.RData')
+load('adhocfinalresults.RData')
+load('result.jan.RData')
+
+getlinks.func <- function(result,corrected) {
+   temp <- select(result$pairs, id1:id2)
+   temp <- cbind(temp,prediction=result$prediction)
+   temp$recordID1 <- paste(result$data$seq_no_enc[temp$id1], result$data$staytype[temp$id1],sep='')
+   temp$recordID2 <- paste(result$data$seq_no_enc[temp$id2], result$data$staytype[temp$id2],sep='')
+   temp2 <- left_join(temp, select(corrected, id1, id2, correct=match.final), by=c('id1','id2'))
+   temp2 <- mutate(temp2, link = ifelse(is.na(correct),(as.numeric(prediction)-1)/2,correct))
+   temp2 %>% select(recordID1, recordID2, link) %>% filter(link==1)
+}
+
+links.jan <- getlinks.func(result.jan.bag,corrected2.jan)
+
+rm(result.jan.bag, corrected2.jan)
+load('result.feb.RData')
+links.feb <- getlinks.func(result.feb.bag,corrected2.feb)
+
+rm(result.feb.bag, corrected2.feb)
+load('result.mar.RData')
+links.mar <- getlinks.func(result.mar.bag,corrected2.mar)
+
+rm(result.mar.bag, corrected2.mar)
+load('result.apr.RData')
+links.apr <- getlinks.func(result.apr.bag,corrected2.apr)
+
+rm(result.apr.bag, corrected2.apr)
+load('result.may.RData')
+links.may <- getlinks.func(result.may.bag,corrected2.may)
+
+rm(result.may.bag, corrected2.may)
+load('result.jun.RData')
+links.jun <- getlinks.func(result.jun.bag,corrected2.jun)
+
+rm(result.jun.bag, corrected2.jun)
+load('result.jul.RData')
+links.jul <- getlinks.func(result.jul.bag,corrected2.jul)
+
+rm(result.jul.bag, corrected2.jul)
+load('result.aug.RData')
+links.aug <- getlinks.func(result.aug.bag,corrected2.aug)
+
+rm(result.aug.bag, corrected2.aug)
+load('result.sep.RData')
+links.sep <- getlinks.func(result.sep.bag,corrected2.sep)
+
+rm(result.sep.bag, corrected2.sep)
+load('result.oct.RData')
+links.oct <- getlinks.func(result.oct.bag,corrected2.oct)
+
+rm(result.oct.bag, corrected2.oct)
+load('result.nov.RData')
+links.nov <- getlinks.func(result.nov.bag,corrected2.nov)
+
+rm(result.nov.bag, corrected2.nov)
+load('result.dec.RData')
+links.dec <- getlinks.func(result.dec.bag,corrected2.dec)
+
+rm(result.dec.bag, corrected2.dec)
+
+adhoc.links <- adhoc.final %>%
+               mutate(link=1) %>%
+               select(recordID1, recordID2, link)
+
+alllinks <- rbind(adhoc.links, links.jan, links.feb, links.mar,
+                  links.apr, links.may, links.jun, links.jul,
+                  links.aug, links.sep, links.oct, links.nov, links.dec)
+
+save(alllinks,file='AllRevisitLinks.RData')
+
+%@
+\end{verbatim}
+\efs
+
+There are 3,713,485 hospitalization records in the 2009-2013 CHARS data.
+
+In order to follow the method I used in the BDSS deduplication, I will read in the
+CHARS data, assign a sequential number, from 1 to 3,713,485, to each record, merge
+that with {\tt alllinks} to add {\tt id1} and {\tt id2} to the linked records.
+
+There are 5,452,109 linked pairs. They are listed in the {\tt alllinks} data frame.
+
+\bfs
+\begin{verbatim}
+library(RecordLinkage); library(plyr); library(dplyr); library(magrittr)
+load('AllRevisitLinks.RData')
+
+clink.big <- read.csv("../../../data/chars/charslink2009_2013.txt",
+                      colClasses=c(rep("character",20)),
+                      col.names=c("seq_no_enc","staytype","dob","firstname","miname","lastname",
+                      "suffix","ssnL4","sex","zipcode","zipplus4","county","facility","hispanic",
+                      "race.wht","race.blk","race.ami","race.asi","race.haw","statecode"))
+clink.little <- select(clink.big, seq_no_enc:lastname)
+rm(clink.big)
+records <- mutate(clink.little, recordID=paste(seq_no_enc,staytype,sep=''))
+records <- select(records,recordID)
+
+# the data frame 'records' provides a link between the recordID field (a concatentation
+# of seq_no_enc and staytype) that identifies individual CHARS
+# records, and the id field that is used in the processing below.
+records$id <- row.names(records)
+
+records1 <- rename(records, recordID1 = recordID, id1 = id)
+temp <- left_join(x=alllinks, y=records1, by='recordID1')
+
+records2 <- rename(records, recordID2 = recordID, id2 = id)
+temp2 <- left_join(x=temp, y=records2, by='recordID2')
+temp2 <- mutate(temp2, id1=as.numeric(id1), id2=as.numeric(id2))
+rm(records1,records2)
+
+Here is an example of what I need to fix:
+Note id 35934 links to 551055, but 22174 does not, etc.
+> crapids2
+           id1     id2
+65702    22174   35934
+65703    22174  104430
+65704    22174  456967
+65705    22174  506325
+65706    22174 1778926
+105942   35934  104430
+105943   35934  456967
+105944   35934  506325
+105945   35934  551055
+105946   35934 1778926
+302644  104430  456967
+302645  104430  506325
+1121307 456967  506325
+1219409 506325  551055
+1219410 506325 1778926
+1306422 551055 1778926
+
+The groupIDs for these records are:
+unique(tryl4[tryl4$id1 %in% test$id,]$groupID.A)
+"A0014627"
+"A0023827"
+"A0068657"
+"A0272762"
+"A0298989"
+"A0322026"
+
+The table from 'table(table(tryl10$groupID.A))' suggest there are
+at least 1,288 cases like this.
+
+templink2 <- arrange(temp2, id1)
+temp.a <- select(templink2, id1:id2)
+
+temp.b <- group_by(temp.a, id1)
+ncols <- max(table(temp.a$id1))
+nrows <- length(unique(temp.a$id1))
+
+temp.c <- data.frame(id1=unique(temp.a$id1))
+for(i in 1:ncols){
+  newcol <- summarise(temp.b, id2=id2[i])
+  temp.c[,i+1] <- newcol[,2]
+  }
+
+Try this:
+1. assign a group ID to all the groups in temp.b (could do this by sequentially numbering the rows in temp.c, then merging that with temp.b)
+   call this group ID A.
+2. make 2 data frames, one with group ID A and id1, the other with group ID A and id2
+3. then combine them with rbind to make one longer frame, renaming id1 and id2 to id
+4. group by id (as in creating temp.b)
+5. check if any of these groups have more than one value of group ID A
+6....  if they do, then combine all the records having those values of group ID A into one group.
+       call the new grouping 'group ID B' and repeat until done
+
+# step 1
+temp.d <- temp.c %>%
+          mutate(groupID.A = paste('A', sprintf('%07s', rownames(temp.c)), sep=''),
+                 groupID.A = gsub(' ', '0', groupID.A)) %>%
+          select(id1, groupID.A) %>% left_join(y=temp.b, by='id1')
+# step 2
+temp.e <- temp.d %>% select(groupID.A, id1) %>% rename(id = id1)
+temp.f <- temp.d %>% select(groupID.A, id2) %>% rename(id = id2)
+# step 3
+temp.g <- rbind(temp.e, temp.f)
+# step 4
+temp.h <- group_by(temp.g, id)
+temp.h <- arrange(temp.h, id, groupID.A)
+
+temp.i <- summarise(temp.h, g1=groupID.A[1])
+temp.j <- summarise(temp.h, g2=groupID.A[2])
+temp.j <- temp.j[!is.na(temp.j$g2),]
+temp.k <- inner_join(temp.i, temp.j, by='id')
+temp.l <- filter(temp.k, g1 != g2)
+
+# if groupID.A in temp.h is the same as any value of g2 in temp.l, then replace it with g1 in temp.l.
+# I can do this by merging temp.h and temp.l on temp.h$groupID.A and temp.l$g1, keeping only
+# the matching rows, then replacing groupID.A with g2,
+# then merging the result with temp.h again, keeping the new values of groupID.A
+
+temp.l <- rename(temp.l, groupID.A = g2)
+temp.m <- inner_join(temp.h, select(temp.l, groupID.A, g1), by='groupID.A')
+temp.n <- select(mutate(temp.m, groupID.A=g1), id, groupID.A)
+temp.o <- distinct(temp.n)
+
+# then copy temp.h again, merge the copy with temp.o by id, to replace groupID.A values in temp.h
+# with those in temp.o.
+
+# then repeat until the data frame is the same at the end as at the start.
+
+temp.h.b <- temp.h
+temp.h.b <- left_join(temp.h.b, rename(temp.o, newg=groupID.A), by='id')
+temp.h.b$groupID.A[!is.na(temp.h.b$newg)] <- temp.h.b$newg[!is.na(temp.h.b$newg)]
+temp.h.b <- select(temp.h.b, id, groupID.A)
+temp.i.b <- summarise(temp.h.b, g1=groupID.A[1])
+temp.j.b <- summarise(temp.h.b, g2=groupID.A[2])
+temp.j.b <- temp.j.b[!is.na(temp.j.b$g2),]
+temp.k.b <- inner_join(temp.i.b, temp.j.b, by='id')
+temp.l.b <- filter(temp.k.b, g1 != g2)
+
+# temp.l.b has no records, indicating that I am done
+
+# group links contains a group identifier for all records that
+# linked to at least one other record
+
+grouplinks <- distinct(temp.h.b)
+
+# now combine grouplinks with the records that did not link to
+# any other, and create a group identifier for all groups
+
+temp.p <- left_join(mutate(records, id=as.numeric(id)), grouplinks, by='id')
+
+# to get group identifiers, I will do this:
+# 1. make a data frame of non-paired records
+# 2. make a data frame of linked records, with one row per group
+# 3. combine them with rbind
+# 4. sequentially number them with a group identifier
+# 5. link with temp.p again to add the group identifier to all records
+
+# step 1:
+temp.q <- select(filter(temp.p, is.na(groupID.A)), groupID.A, id)
+
+# step 2
+temp.r <- temp.p %>%
+          filter(!is.na(groupID.A)) %>%
+          select(id, groupID.A) %>%
+          group_by(groupID.A) %>%
+          summarise(id = id[1])
+# step 3
+temp.s <- arrange(bind_rows(temp.q, temp.r), id)
+
+# step 4
+temp.t <- temp.s %>%
+          mutate(linkgroup = paste('L', sprintf('%07s', rownames(temp.s)), sep=''),
+                 linkgroup = gsub(' ', '0', linkgroup))
+
+# now link with the pairing records (by groupID.A), then combine
+# pairing and non-pairing records, then link with 'records'
+
+temp.t.1 <- select(filter(temp.p, !is.na(groupID.A)), groupID.A, id)
+temp.t.2 <- select(filter(temp.t, !is.na(groupID.A)), groupID.A, linkgroup)
+
+temp.u <- inner_join(temp.t.1, temp.t.2, by = 'groupID.A')
+
+# get non-paired records
+temp.t.3 <- select(filter(temp.t, is.na(groupID.A)), id, linkgroup)
+
+temp.v <- arrange(bind_rows(select(temp.u, id, linkgroup), temp.t.3), id)
+
+chars.linkgroups <- inner_join(mutate(records, id=as.numeric(id)), temp.v, by='id')
+
+write.csv(chars.linkgroups, file='charslinkgroups.csv', row.names=F)
+\end{verbatim}
+\efs
+
+Create a SAS dataset with the linkgroups, ready for merging with data from the CHARS files.
+
+\begin{lstlisting}[language=sas, caption=read linkgroups into SAS]
+libname chars 'c:\data\chars';
+proc import out=linkgroups
+   file = 'c:\user\projects\CHARSrevisit\charslinkgroups.csv'
+   dbms = csv
+   replace
+   ;
+run;
+data chars.revisitgroups2009_2013(keep=seq_no_enc staytype linkgroup);
+   length seq_no_enc $ 10 staytype $ 1;
+   set linkgroups;
+   seq_no_enc = substr(recordID,1,10);
+   staytype   = substr(recordID,11,1);
+run;
+\end{lstlisting}
+
+\pagebreak
+
+\begin{table}[ht]
+  \caption{Frequency table of Fellegi-Sunter weights by machine-predicted links.}
+\centering
+\begin{tabular}{rrrr}
+  \hline
+ & total & predicted & predicted & percent \\
+FS weight & pairs & non-link & link & correct \\
+  \hline
+ (-50,-10] & 240715759 & 240715759 & 0       & 100 \\
+ (-10,0]   &   1326373 & 1326114   & 259     & \\
+ (0,10]    &    170190 & 169970    & 220     & \\
+ (10,20]   &    133117 & 132641    & 476     & \\
+ (20,30]   &     36378 & 29981     & 6397    & \\
+ (30,40]   &     22322 & 9254      & 13068   & \\
+ (40,50]   &     33019 & 9465      & 23554   & \\
+ (50,60]   &     50568 & 9119      & 41449   & \\
+ (60,70]   &    135274 & 1684      & 133590  & \\
+ (70,95]   &   1262522 & 347       & 1262175 & \\
+ (95,155]  &   3955116 & 0         & 3955116 & \\
+ \hline
+ total     & 242404334 & 5436304 & 247840638\\
+ \hline
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+  \caption{Frequency table of Fellegi-Sunter weights by machine-predicted links.}
+\centering
+\begin{tabular}{rrrrrr}
+  \hline
+ & total & predicted & predicted & non-links & links\\
+FS weight & pairs & non-link & link & correct & correct \\
+  \hline
+ (-50,-10] & 240,715,759 & 240715759 & 0         & 100.0 &       \\
+ (-10,20]  & 1,629,680   & 1,628,725 & 955       & 99.9  & 70.0  \\
+ (20,30]   &    36,378   & 29,981    & 6,397     & 95.1  & 95.2  \\
+ (30,40]   &    22,322   & 9,254     & 13,068    & 93.3  & 95.7  \\
+ (40,50]   &    33,019   & 9,465     & 23,554    & 80.0  & 98.8  \\
+ (50,60]   &    50,568   & 9,119     & 41,449    & 89.9  & 96.3  \\
+ (60,95]   & 1,397,796   & 2,031     & 1,395,765 & 87.1  & 100.0 \\
+ (95,155]  &   3955116   & 0         & 3955116   &       & 100.0 \\
+ \hline
+ total     & 247840638 & 242404334 & 5436304 & & \\
+ \hline
+\end{tabular}
+\end{table}
+
+
+
+\end{document}
+
+FS weight  | total pairs | non-links   | links     | % non-links correct  | % links correct
+-----------|-------------|-------------|-----------|----------------------|----------------
+ (-50,-10] | 240,715,759 | 240,715,759 | 0         | 100.0 |
+ (-10,20]  | 1,629,680   | 1,628,725   | 955       | 99.9  | 70.0
+ (20,30]   |    36,378   | 29,981      | 6,397     | 95.1  | 95.2
+ (30,40]   |    22,322   | 9,254       | 13,068    | 93.3  | 95.7
+ (40,50]   |    33,019   | 9,465       | 23,554    | 80.0  | 98.8
+ (50,60]   |    50,568   | 9,119       | 41,449    | 89.9  | 96.3
+ (60,95]   | 1,397,796   | 2,031       | 1,395,765 | 87.1  | 100.0
+ (95,155]  | 3,955,116   | 0           | 3,955,116 |       | 100.0
+ total     | 247,840,638 | 242,404,334 | 5,436,304 |       |
